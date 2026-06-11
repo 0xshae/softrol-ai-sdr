@@ -58,6 +58,13 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof PanelTop }> = [
   { id: "trade", label: "Trade Show Mode", icon: Users },
 ];
 
+const primaryTabs = tabs.filter(
+  (tab) => tab.id === "prospect" || tab.id === "console",
+);
+const supportingTabs = tabs.filter(
+  (tab) => tab.id !== "prospect" && tab.id !== "console",
+);
+
 const statusTone = (status: LeadStatus) => {
   if (status === "Ready for sales") return "emerald" as const;
   if (status === "Needs qualification") return "amber" as const;
@@ -137,35 +144,59 @@ function AppHeader({
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/[0.07] bg-[#071018]/90 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-5 px-4 py-3 sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
         <Logo />
-        <nav className="hidden items-center rounded-xl border border-white/[0.07] bg-white/[0.025] p-1 lg:flex">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => onTabChange(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70",
-                  activeTab === tab.id
-                    ? "bg-white/[0.09] text-white shadow-sm"
-                    : "text-slate-500 hover:text-slate-200",
-                )}
-              >
-                <Icon size={15} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="hidden items-center gap-3 sm:flex">
-          <DemoModeNote compact />
-          <div className="h-8 w-px bg-white/10" />
-          <div className="text-right">
-            <p className="text-xs font-semibold text-slate-300">Sales operations</p>
-            <p className="text-[10px] text-slate-600">Human-controlled</p>
+        <nav className="hidden items-center gap-3 lg:flex">
+          <div className="flex items-center gap-1 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.045] p-1">
+            <span className="px-2 text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-300">
+              Live demo
+            </span>
+            {primaryTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => onTabChange(tab.id)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70",
+                    activeTab === tab.id
+                      ? "bg-cyan-300 text-[#061219] shadow-[0_8px_24px_rgba(75,209,229,0.14)]"
+                      : "text-cyan-100 hover:bg-cyan-300/10",
+                  )}
+                >
+                  <Icon size={15} />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
+          <div className="flex items-center gap-0.5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-1">
+            <span className="px-2 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-600">
+              Explore
+            </span>
+            {supportingTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => onTabChange(tab.id)}
+                  title={tab.label}
+                  aria-label={tab.label}
+                  className={cn(
+                    "grid h-9 w-9 place-items-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70",
+                    activeTab === tab.id
+                      ? "bg-white/[0.1] text-white"
+                      : "text-slate-600 hover:bg-white/[0.05] hover:text-slate-300",
+                  )}
+                >
+                  <Icon size={15} />
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+        <div className="hidden items-center gap-3 xl:flex">
+          <DemoModeNote compact />
         </div>
         <button
           className="rounded-lg border border-white/10 p-2 text-slate-300 lg:hidden"
@@ -177,8 +208,11 @@ function AppHeader({
       </div>
       {open ? (
         <nav className="border-t border-white/[0.06] bg-[#08121b] p-3 lg:hidden">
-          <div className="grid gap-1">
-            {tabs.map((tab) => {
+          <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.17em] text-cyan-300">
+            Live demo
+          </p>
+          <div className="grid gap-1 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.035] p-1">
+            {primaryTabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
@@ -190,8 +224,34 @@ function AppHeader({
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-medium",
                     activeTab === tab.id
-                      ? "bg-cyan-300/10 text-cyan-200"
-                      : "text-slate-400",
+                      ? "bg-cyan-300 text-[#061219]"
+                      : "text-cyan-100",
+                  )}
+                >
+                  <Icon size={17} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="px-3 pb-2 pt-5 text-[10px] font-bold uppercase tracking-[0.17em] text-slate-600">
+            Explore
+          </p>
+          <div className="grid gap-1">
+            {supportingTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    onTabChange(tab.id);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-medium",
+                    activeTab === tab.id
+                      ? "bg-white/[0.08] text-white"
+                      : "text-slate-500",
                   )}
                 >
                   <Icon size={17} />
@@ -234,13 +294,60 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
               with human control, no autonomous quoting, and Softrol-specific
               qualification logic.
             </p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <Button onClick={() => onExplore("console")}>
-                Open sales console <ArrowRight size={16} />
-              </Button>
-              <Button variant="secondary" onClick={() => onExplore("prospect")}>
-                Run a qualification <WandSparkles size={16} />
-              </Button>
+            <div className="mt-9">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
+                Start the live demo
+              </p>
+              <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => onExplore("prospect")}
+                  className="group rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5 text-left transition hover:border-cyan-300/35 hover:bg-cyan-300/[0.09] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] font-bold text-cyan-300">
+                      01 · BUYER VIEW
+                    </span>
+                    <MessageSquareText size={18} className="text-cyan-300" />
+                  </div>
+                  <p className="mt-5 text-lg font-semibold text-white">
+                    Prospect Experience
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Watch AI qualify a real inbound inquiry.
+                  </p>
+                  <span className="mt-5 flex items-center gap-2 text-xs font-semibold text-cyan-200">
+                    Run qualification
+                    <ArrowRight
+                      size={14}
+                      className="transition group-hover:translate-x-1"
+                    />
+                  </span>
+                </button>
+                <button
+                  onClick={() => onExplore("console")}
+                  className="group rounded-2xl border border-blue-400/20 bg-blue-400/[0.06] p-5 text-left transition hover:border-blue-400/35 hover:bg-blue-400/[0.09] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/70"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] font-bold text-blue-300">
+                      02 · SELLER VIEW
+                    </span>
+                    <BarChart3 size={18} className="text-blue-300" />
+                  </div>
+                  <p className="mt-5 text-lg font-semibold text-white">
+                    Sales Console
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Review routing, context, and CRM-ready briefs.
+                  </p>
+                  <span className="mt-5 flex items-center gap-2 text-xs font-semibold text-blue-200">
+                    Open sales workspace
+                    <ArrowRight
+                      size={14}
+                      className="transition group-hover:translate-x-1"
+                    />
+                  </span>
+                </button>
+              </div>
             </div>
             <div className="mt-10 max-w-3xl border-l-2 border-cyan-300/50 pl-5">
               <p className="text-lg font-medium leading-8 text-slate-200">
