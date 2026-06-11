@@ -854,7 +854,7 @@ function SalesConsole({
         <MetricCard label="Filtered / nurture" value="3" detail="Pipeline noise prevented" accent="blue" />
       </div>
 
-      <div className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1.12fr)_minmax(440px,.88fr)]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(440px,.88fr)]">
         <Card className="overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-white/[0.08] p-4 sm:flex-row">
             <label className="relative flex-1">
@@ -877,7 +877,7 @@ function SalesConsole({
               ))}
             </select>
           </div>
-          <div className="hidden overflow-x-auto lg:block">
+          <div className="hidden overflow-x-auto lg:block xl:hidden 2xl:block">
             <table className="w-full min-w-[930px] text-left">
               <thead className="border-b border-white/[0.07] bg-white/[0.018] text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">
                 <tr>
@@ -910,7 +910,7 @@ function SalesConsole({
               </tbody>
             </table>
           </div>
-          <div className="grid gap-2 p-3 lg:hidden">
+          <div className="grid gap-2 p-3 lg:hidden xl:grid 2xl:hidden">
             {filtered.map((lead) => (
               <button
                 key={lead.id}
@@ -918,6 +918,9 @@ function SalesConsole({
                 className={cn("rounded-xl border p-4 text-left", selected.id === lead.id ? "border-cyan-300/25 bg-cyan-300/[0.05]" : "border-white/[0.07] bg-white/[0.02]")}
               >
                 <p className="font-semibold text-slate-200">{lead.title}</p>
+                <p className="mt-1.5 text-xs leading-5 text-slate-500">
+                  {lead.source} · {lead.classification.intent}
+                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Badge tone={fitTone(lead.classification.fit)}>{lead.classification.fit}</Badge>
                   <Badge tone={statusTone(lead.status)}>{lead.status}</Badge>
@@ -972,7 +975,7 @@ function LeadDetail({
 }) {
   const context = Object.entries(lead.extractedContext).filter(([, value]) => Boolean(value));
   return (
-    <Card className="h-fit overflow-hidden 2xl:sticky 2xl:top-24">
+    <Card className="h-fit overflow-hidden xl:sticky xl:top-24">
       <div className="border-b border-white/[0.08] p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
