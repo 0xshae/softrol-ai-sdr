@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto Commit & Sync"
+  short_description: "Commit task changes and sync them safely"
+  default_prompt: "Use $auto-commit-sync to commit the completed task changes and push the current branch."
