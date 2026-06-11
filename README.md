@@ -1,12 +1,14 @@
-# Softrol Revenue Desk — AI Inbound SDR Demoware
+# Softrol Revenue Desk — Inbound Qualification Demoware
 
-Softrol Revenue Desk is a lightweight demoware product for Gushwork's AI-powered Inbound SDR assignment. It demonstrates how a controlled AI qualification layer could help Softrol Systems classify, qualify, route, and summarize inbound inquiries across sales, support, service, low-fit, and non-sales categories.
+Softrol Revenue Desk is a lightweight demoware product for Gushwork's AI-powered Inbound SDR assignment. It demonstrates how Softrol Systems could qualify, route, and summarize inbound inquiries across sales, support, service, low-fit, and non-sales categories.
 
 ## Product thesis
 
-Softrol sells complex, high-value industrial laundry automation systems. Its inbound inquiries are valuable but messy: serious automation projects arrive beside support issues, parts requests, vague quote requests, small laundromat inquiries, students, vendors, and trade-show notes.
+Softrol sells complex, high-value industrial laundry automation systems. Its inbound channels receive serious automation projects alongside support issues, parts requests, vague quote requests, small laundromat inquiries, students, vendors, and trade-show notes.
 
-Softrol does not need AI to sell for its reps. It needs AI to make every inbound inquiry sales-ready before a rep spends time on it.
+Revenue Desk turns each inquiry into a clear next step. The system prepares the inquiry; Softrol's team owns discovery and the commercial conversation.
+
+The qualification logic is specific to Softrol's world: RFID garment and linen tracking, automated sortation, LOIS support, ERP integration, wash aisle controls, rail and material handling, and service requests.
 
 Revenue Desk:
 
@@ -15,19 +17,19 @@ Revenue Desk:
 - extracts facility, volume, process, pain, timeline, and systems context
 - recommends the correct human route
 - produces a sales-ready, CRM-ready brief
-- keeps pricing, technical feasibility, relationships, and closing with people
+- keeps discovery, technical validation, pricing, proposals, and closing with Softrol's team
 
 ## Demo Mode
 
 This prototype uses deterministic Softrol-specific qualification rules so the evaluation is reliable. In production, the same workflow can run on an LLM with approved knowledge and guardrails.
 
-The deterministic runtime is intentional: reviewers can experience every scenario without an API key, network dependency, variable model output, or an unsafe response.
+The deterministic runtime is intentional: reviewers can experience every scenario without an API key, network dependency, or variable model output.
 
 ## What the demo shows
 
 ### Overview
 
-The product thesis, controlled first-mile workflow, visible qualification rules, explicit AI boundaries, a before-and-after qualification example, and the trust model for a skeptical VP of Sales.
+The product thesis, controlled first-mile workflow, visible qualification rules, a before-and-after qualification example, and clear ownership between the system and Softrol's team.
 
 ### Prospect Experience
 
@@ -48,7 +50,7 @@ An internal revenue operations view with:
 
 ### Pilot Impact
 
-A 30-day controlled pilot model focused on response quality, routing accuracy, qualified meetings, rep usefulness, and trust. The economic case is not replacing reps; it is advancing one additional high-fit opportunity faster and preventing valuable demand from going cold or being misrouted.
+A 30-day controlled pilot model focused on response quality, routing accuracy, qualified meetings, rep usefulness, and trust. The economic case is advancing high-fit opportunities faster and preventing valuable demand from going cold or being misrouted.
 
 ### Trade Show Mode
 
@@ -73,18 +75,18 @@ The application includes 12 complete scenarios:
 
 Custom messages are handled conservatively. Empty input is rejected, vague input asks for foundational context, unrelated input is held outside the sales pipeline, and unknown details are never invented.
 
-## Guardrails
+## Sales control
 
-This demo intentionally avoids autonomous quoting or technical promises. The goal is to demonstrate a controlled first-mile qualification layer for a complex industrial sales motion. Softrol's reps remain in control; the AI prepares inbound inquiries so humans can follow up faster and with better context.
+Revenue Desk is a controlled first-mile qualification layer for a complex industrial sales motion. The system qualifies, routes, prepares, summarizes, flags risks, asks missing questions, and creates a CRM-ready brief.
 
-The product never:
+Softrol's team retains ownership:
 
-- provides final pricing
-- promises technical feasibility or compatibility
-- replaces sales judgment
-- troubleshoots critical support issues autonomously
-- invents product capabilities or missing customer context
-- sends unsupported technical recommendations
+- pricing stays with qualified human discovery
+- reps own relationships, proposals, and closing
+- Softrol specialists confirm technical feasibility and compatibility
+- support teams own urgent operational response
+- high-fit sales handoffs remain human-reviewed
+- product and technical recommendations use approved knowledge
 
 ## Architecture
 
@@ -134,15 +136,15 @@ vercel --prod
 
 Alternatively, import the GitHub repository into Vercel and use the default Next.js build settings.
 
-## Why this matters to a skeptical VP of Sales
+## Why this matters to sales leadership
 
-Revenue Desk does not ask sales leadership to trust an autonomous agent with complex deals. It makes the first mile visible and controlled:
+Revenue Desk makes the first mile visible and controlled:
 
 - every classification includes confidence and reasoning
 - high-fit inquiries are prioritized with relevant plant context
 - support and service are routed away from sales
 - low-fit and non-sales traffic stays out of the pipeline
 - reps approve handoffs and rate usefulness
-- technical discovery, pricing, proposals, and closing remain human-owned
+- technical discovery, pricing, proposals, and closing remain with Softrol's team
 
-The useful question is not "Can AI replace a rep?" It is "Can Softrol respond to its best opportunities faster, with better context, while protecting rep time and customer trust?"
+The practical question is whether Softrol can respond to its best opportunities faster, with better context, while protecting rep time and customer trust.
