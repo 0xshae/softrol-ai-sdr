@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Softrol Revenue Desk",
-  description: "AI inbound SDR for complex industrial sales.",
+  description: "Inbound qualification for complex laundry automation sales.",
 };
 
 export default function RootLayout({

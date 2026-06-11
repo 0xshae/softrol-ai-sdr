@@ -112,17 +112,17 @@ function DemoModeNote({ compact = false }: { compact?: boolean }) {
   return (
     <div
       className={cn(
-        "flex gap-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] text-cyan-50",
-        compact ? "px-3 py-2.5" : "p-4",
+        "flex gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] text-slate-300",
+        compact ? "px-3 py-2" : "p-3.5",
       )}
     >
-      <ShieldCheck className="mt-0.5 shrink-0 text-cyan-300" size={18} />
+      <ShieldCheck className="mt-0.5 shrink-0 text-slate-500" size={16} />
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.13em] text-cyan-300">
+        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
           Demo Mode
         </p>
         {!compact ? (
-          <p className="mt-1 text-sm leading-6 text-slate-300">
+          <p className="mt-1 text-xs leading-5 text-slate-500">
             This prototype uses deterministic Softrol-specific qualification rules
             so the evaluation is reliable. In production, the same workflow can run
             on an LLM with approved knowledge and guardrails.
@@ -283,16 +283,19 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
           <div className="max-w-4xl">
             <Badge tone="cyan" className="mb-6">
               <Sparkles className="mr-1.5" size={12} />
-              AI inbound SDR for complex industrial sales
+              Inbound qualification for complex laundry automation sales
             </Badge>
             <h1 className="text-balance text-5xl font-semibold leading-[1.04] tracking-[-0.045em] text-white sm:text-6xl lg:text-7xl">
-              Make every inbound inquiry{" "}
-              <span className="text-cyan-300">sales-ready.</span>
+              Turn every inbound inquiry into a{" "}
+              <span className="text-cyan-300">clear next step.</span>
             </h1>
             <p className="mt-7 max-w-3xl text-lg leading-8 text-slate-400 sm:text-xl">
-              Classify, qualify, and route every inquiry before a rep spends time —
-              with human control, no autonomous quoting, and Softrol-specific
-              qualification logic.
+              Qualify, route, and summarize inbound interest before the commercial
+              conversation begins.
+            </p>
+            <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-500">
+              Built around RFID tracking, automated sortation, LOIS support, ERP
+              integration, wash aisle controls, and service requests.
             </p>
             <div className="mt-9">
               <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
@@ -351,8 +354,8 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
             </div>
             <div className="mt-10 max-w-3xl border-l-2 border-cyan-300/50 pl-5">
               <p className="text-lg font-medium leading-8 text-slate-200">
-                Softrol does not need AI to sell for its reps. It needs AI to make
-                every inbound inquiry sales-ready before a rep spends time on it.
+                The system prepares the inquiry; Softrol&apos;s team owns discovery
+                and the commercial conversation.
               </p>
             </div>
           </div>
@@ -361,7 +364,7 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
               <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <Activity size={16} className="text-emerald-300" />
-                  Live inbound triage
+                  Today&apos;s inbound snapshot
                 </div>
                 <Badge tone="emerald">System ready</Badge>
               </div>
@@ -425,9 +428,23 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
             “Need pricing for an automated garment sorting system. Please send
             details.”
           </blockquote>
-          <div className="mt-5 flex items-center gap-2 text-sm text-amber-200">
-            <CircleAlert size={16} />
-            No facility, volume, current process, or buying timeline
+          <p className="mt-5 text-[10px] font-bold uppercase tracking-[0.15em] text-amber-200">
+            Rep still needs to know
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-400">
+            {[
+              "Facility type",
+              "Daily volume",
+              "Current sorting method",
+              "Retrofit or new build",
+              "Timeline",
+              "Project driver",
+            ].map((item) => (
+              <div key={item} className="flex items-center gap-2">
+                <CircleAlert size={13} className="shrink-0 text-amber-200" />
+                {item}
+              </div>
+            ))}
           </div>
         </Card>
         <Card className="relative overflow-hidden p-6 md:p-8">
@@ -440,9 +457,15 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             {[
               ["Intent", "Automated sortation evaluation"],
-              ["Fit", "Unknown until volume is confirmed"],
-              ["Missing", "Facility, volume, process, project type"],
-              ["Route", "AI follow-up before sales"],
+              [
+                "Fit",
+                "Unknown until facility type and daily volume are confirmed",
+              ],
+              [
+                "Missing",
+                "Facility type, daily volume, current sorting method, retrofit/new build, timeline",
+              ],
+              ["Recommended route", "AI follow-up before sales handoff"],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl bg-white/[0.035] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{label}</p>
@@ -450,13 +473,21 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
               </div>
             ))}
           </div>
+          <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.045] p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-amber-200">
+              Rep note
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Do not quote yet. First confirm operational scale and project driver.
+            </p>
+          </div>
         </Card>
       </section>
 
       <section className="border-y border-white/[0.07] bg-white/[0.018]">
         <div className="mx-auto grid max-w-[1540px] gap-6 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:px-8">
           <CapabilityCard
-            title="What AI does"
+            title="Where the system helps"
             icon={Zap}
             tone="cyan"
             items={[
@@ -464,21 +495,21 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
               "Asks plant-specific qualification questions",
               "Extracts facility, volume, process, pain, and timeline",
               "Routes to sales, support, service, or nurture",
-              "Creates sales-ready and CRM-ready handoff briefs",
+              "Creates sales-ready, CRM-ready briefs",
               "Logs risks, confidence, and missing information",
             ]}
           />
           <CapabilityCard
-            title="What AI does not do"
+            title="Where humans stay involved"
             icon={ShieldCheck}
             tone="red"
             items={[
-              "Does not quote final pricing",
-              "Does not promise technical feasibility",
-              "Does not replace sales judgment",
-              "Does not troubleshoot critical support issues alone",
-              "Does not invent product claims",
-              "Does not send unsupported technical recommendations",
+              "Pricing follows qualified human discovery",
+              "Softrol specialists confirm technical feasibility",
+              "Reps own relationships, proposals, and closing",
+              "Support teams handle urgent operational issues",
+              "Human review governs product and technical claims",
+              "Specialists approve technical recommendations",
             ]}
           />
         </div>
@@ -525,16 +556,16 @@ function Overview({ onExplore }: { onExplore: (tab: TabId) => void }) {
             </div>
           </Card>
           <Card className="p-6 md:p-8">
-            <SectionLabel>Built for a skeptical VP of Sales</SectionLabel>
+            <SectionLabel>Built for sales control</SectionLabel>
             <h2 className="max-w-xl text-3xl font-semibold tracking-tight text-white">
-              Control is a product feature, not a disclaimer.
+              Clear ownership at every step.
             </h2>
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
               {[
-                ["No autonomous quoting", "Pricing stays with qualified human discovery.", Clipboard],
-                ["No rep replacement", "AI prepares context; reps own relationships and closing.", Handshake],
-                ["No feasibility promises", "Technical claims require specialist review.", Factory],
-                ["Human review before handoff", "Every material opportunity preserves judgment.", UserCheck],
+                ["Commercial discovery", "Pricing stays with qualified human discovery.", Clipboard],
+                ["Rep ownership", "Reps keep ownership of relationships, proposals, and closing.", Handshake],
+                ["Technical validation", "Technical feasibility is confirmed by Softrol specialists.", Factory],
+                ["Reviewed handoffs", "High-fit sales handoffs stay human-reviewed.", UserCheck],
               ].map(([title, copy, Icon]) => (
                 <div key={title as string} className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-5">
                   <Icon className="text-cyan-300" size={20} />
@@ -1249,7 +1280,7 @@ function PilotImpact() {
           ["5", "Vague quote requests qualified"],
           ["6", "Support/service requests rerouted"],
           ["5", "Low-fit and non-sales filtered"],
-          ["92%", "Leads with complete qualification brief"],
+          ["92%", "Leads with complete CRM-ready brief"],
         ].map(([value, label]) => (
           <Card key={label} className="flex items-center gap-4 p-5">
             <p className="text-2xl font-semibold text-slate-200">{value}</p>
@@ -1265,14 +1296,13 @@ function PilotImpact() {
           </div>
           <div className="p-6 md:p-8">
             <p className="text-lg leading-8 text-slate-300">
-              This is not justified by replacing SDR labor. It is justified if Softrol
-              advances one additional high-fit automation opportunity faster, prevents
-              serious leads from going cold, or keeps sales focused on qualified
-              opportunities.
+              The pilot is justified if Softrol advances one additional high-fit
+              automation opportunity faster, prevents serious leads from going cold,
+              or keeps sales focused on qualified opportunities.
             </p>
             <p className="mt-4 text-sm leading-6 text-slate-500">
-              The goal is not to replace reps; it is to protect high-value opportunities
-              from going slow, vague, misrouted, or under-qualified.
+              Revenue Desk prepares the inquiry so Softrol&apos;s team can move into
+              discovery with clearer context and the correct route.
             </p>
           </div>
         </div>
