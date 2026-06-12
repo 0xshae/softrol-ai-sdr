@@ -244,6 +244,8 @@ export function useVoiceIntake(
   /* ----- listen for one utterance ----- */
 
   const listenOnceRef = useRef<() => Promise<string>>(null);
+  const networkRetryRef = useRef(0);
+  const MAX_NETWORK_RETRIES = 3;
 
   const listenOnceImpl = (): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -271,6 +273,8 @@ export function useVoiceIntake(
 
       r.onend = () => {
         setInterimText("");
+        // Successful recognition resets the retry counter
+        networkRetryRef.current = 0;
         if (finalText.trim()) {
           resolve(finalText.trim());
         } else {
@@ -287,7 +291,7 @@ export function useVoiceIntake(
       r.onerror = (event: any) => {
         setInterimText("");
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-          reject(new Error("Microphone permission denied"));
+          reject(new Error("Microphone permission denied. Please allow microphone access and try again."));
         } else if (event.error === "no-speech") {
           // Silence — restart
           if (stateRef.current === "listening" && listenOnceRef.current) {
@@ -295,6 +299,44 @@ export function useVoiceIntake(
           } else {
             reject(new Error("No speech detected"));
           }
+        } else if (event.error === "network") {
+          // Network errors can be transient — retry with backoff
+          if (
+            networkRetryRef.current < MAX_NETWORK_RETRIES &&
+            stateRef.current === "listening" &&
+            listenOnceRef.current
+          ) {
+            networkRetryRef.current += 1;
+            const delay = networkRetryRef.current * 500;
+            setTimeout(() => {
+              if (stateRef.current === "listening" && listenOnceRef.current) {
+                listenOnceRef.current().then(resolve).catch(reject);
+              } else {
+                reject(
+                  new Error(
+                    "Speech recognition requires a secure connection. Please use localhost or HTTPS, and ensure you have internet access."
+                  )
+                );
+              }
+            }, delay);
+          } else {
+            // Exhausted retries — give a helpful message
+            const isSecure =
+              typeof window !== "undefined" &&
+              (window.location.protocol === "https:" ||
+                window.location.hostname === "localhost" ||
+                window.location.hostname === "127.0.0.1");
+            reject(
+              new Error(
+                isSecure
+                  ? "Speech recognition could not connect to the recognition service. Please check your internet connection and try again."
+                  : "Speech recognition requires a secure connection (HTTPS). You are currently on an insecure origin. Please access this page via localhost or deploy with HTTPS."
+              )
+            );
+          }
+        } else if (event.error === "aborted") {
+          // User or system aborted — not an error, just stop
+          reject(new Error("Speech recognition was stopped."));
         } else {
           reject(new Error(event.error || "Speech recognition error"));
         }
