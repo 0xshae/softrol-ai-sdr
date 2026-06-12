@@ -19,9 +19,11 @@ import {
   Handshake,
   Headphones,
   Inbox,
+  Keyboard,
   Layers3,
   Menu,
   MessageSquareText,
+  Mic,
   PanelTop,
   RefreshCw,
   Route,
@@ -50,6 +52,7 @@ import type {
   LeadStatus,
 } from "@/lib/types";
 import { Badge, Button, Card, EmptyValue, MetricCard, SectionLabel, cn } from "./ui";
+import { VoiceIntakePanel } from "./voice-intake";
 
 type TabId = "overview" | "prospect" | "console" | "pilot" | "trade";
 
@@ -644,6 +647,8 @@ function ProspectExperience({
 }: {
   onOpenLead: (lead: LeadScenario) => void;
 }) {
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceLead, setVoiceLead] = useState<LeadScenario | null>(null);
   const [selectedId, setSelectedId] = useState(leadScenarios[2].id);
   const [customInput, setCustomInput] = useState("");
   const [activeLead, setActiveLead] = useState<LeadScenario | null>(null);
@@ -761,14 +766,47 @@ function ProspectExperience({
     setIntakeKey((value) => value + 1);
   };
 
+  // Determine the active lead for the right-hand context panel (typed or voice)
+  const contextLead = voiceMode ? voiceLead : activeLead;
+
   return (
     <div className="mx-auto max-w-[1540px] animate-fade-up px-4 py-8 sm:px-6 lg:px-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
       <PageHeading
         eyebrow="External experience"
         title="A professional first response — before sales gets involved."
         copy="Customers try the agent through a website intake chat. The chat collects missing context before generating a CRM-ready handoff for Softrol’s team."
       />
-      <div className="mt-8 grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)_340px]">
+        <div className="flex items-center gap-1 rounded-xl border border-white/[0.1] bg-white/[0.025] p-1">
+          <button
+            onClick={() => setVoiceMode(false)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition",
+              !voiceMode
+                ? "bg-cyan-300 text-[#061219] shadow-sm"
+                : "text-slate-400 hover:text-slate-200",
+            )}
+          >
+            <Keyboard size={14} />
+            Type
+          </button>
+          <button
+            onClick={() => setVoiceMode(true)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition",
+              voiceMode
+                ? "bg-cyan-300 text-[#061219] shadow-sm"
+                : "text-slate-400 hover:text-slate-200",
+            )}
+          >
+            <Mic size={14} />
+            Speak
+          </button>
+        </div>
+      </div>
+      <div className={cn("mt-8 grid gap-6", voiceMode ? "xl:grid-cols-[minmax(0,1fr)_340px]" : "xl:grid-cols-[360px_minmax(0,1fr)_340px]")}>
+        {/* Left sidebar — scenario selector (typed mode only) */}
+        {!voiceMode && (
         <Card className="h-fit p-5">
           <div className="flex items-center justify-between">
             <p className="font-semibold text-white">Choose an inquiry</p>
@@ -828,7 +866,17 @@ function ProspectExperience({
             {intakeReady ? "Run qualification" : "Complete intake first"}
           </Button>
         </Card>
+        )}
 
+        {/* Center column — voice panel or typed chat */}
+        {voiceMode ? (
+          <VoiceIntakePanel
+            onQualified={(lead) => {
+              setVoiceLead(lead);
+              onOpenLead(lead);
+            }}
+          />
+        ) : (
         <Card className="min-h-[680px] overflow-hidden">
           <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
             <div>
@@ -923,16 +971,17 @@ function ProspectExperience({
             </div>
           </div>
         </Card>
+        )}
 
         <Card className="h-fit p-5">
           <div className="flex items-center gap-2">
             <Target size={17} className="text-cyan-300" />
             <p className="font-semibold text-white">AI captured context</p>
           </div>
-          {activeLead ? (
+          {contextLead ? (
             <>
               <div className="mt-5 grid gap-3">
-                {Object.entries(activeLead.extractedContext)
+                {Object.entries(contextLead.extractedContext)
                   .filter(([, value]) => Boolean(value))
                   .map(([key, value]) => (
                     <div key={key} className="rounded-xl bg-white/[0.03] p-3.5">
@@ -945,16 +994,16 @@ function ProspectExperience({
               </div>
               <div className="mt-5 border-t border-white/[0.07] pt-5">
                 <div className="flex flex-wrap gap-2">
-                  <Badge tone={fitTone(activeLead.classification.fit)}>
-                    {activeLead.classification.fit} fit
+                  <Badge tone={fitTone(contextLead.classification.fit)}>
+                    {contextLead.classification.fit} fit
                   </Badge>
-                  <Badge tone={urgencyTone(activeLead.classification.urgency)}>
-                    {activeLead.classification.urgency} urgency
+                  <Badge tone={urgencyTone(contextLead.classification.urgency)}>
+                    {contextLead.classification.urgency} urgency
                   </Badge>
                 </div>
                 <p className="mt-4 text-xs leading-5 text-slate-500">
-                  Confidence {activeLead.classification.confidence}% ·{" "}
-                  {activeLead.classification.reason}
+                  Confidence {contextLead.classification.confidence}% ·{" "}
+                  {contextLead.classification.reason}
                 </p>
               </div>
             </>
