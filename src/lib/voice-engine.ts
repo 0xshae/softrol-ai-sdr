@@ -206,8 +206,13 @@ export function useVoiceIntake(
         utterance.lang = config.lang;
         utterance.rate = 0.95;
         utterance.pitch = 1;
-        utterance.onend = () => resolve();
-        utterance.onerror = () => resolve();
+        utterance.onend = () => {
+          // Allow the audio system to fully release before we start
+          // listening — Chrome aborts SpeechRecognition if synthesis
+          // audio hasn't settled.
+          setTimeout(resolve, 350);
+        };
+        utterance.onerror = () => setTimeout(resolve, 350);
         window.speechSynthesis.cancel(); // clear any pending
         window.speechSynthesis.speak(utterance);
       }),
@@ -245,7 +250,9 @@ export function useVoiceIntake(
 
   const listenOnceRef = useRef<() => Promise<string>>(null);
   const networkRetryRef = useRef(0);
+  const abortRetryRef = useRef(0);
   const MAX_NETWORK_RETRIES = 3;
+  const MAX_ABORT_RETRIES = 3;
 
   const listenOnceImpl = (): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -335,8 +342,27 @@ export function useVoiceIntake(
             );
           }
         } else if (event.error === "aborted") {
-          // User or system aborted — not an error, just stop
-          reject(new Error("Speech recognition was stopped."));
+          // Chrome often aborts recognition right after speechSynthesis
+          // finishes — retry with increasing delay to let audio settle
+          if (
+            abortRetryRef.current < MAX_ABORT_RETRIES &&
+            stateRef.current === "listening" &&
+            listenOnceRef.current
+          ) {
+            abortRetryRef.current += 1;
+            const delay = abortRetryRef.current * 400;
+            setTimeout(() => {
+              // Make sure synthesis is fully stopped before retrying
+              window.speechSynthesis?.cancel();
+              if (stateRef.current === "listening" && listenOnceRef.current) {
+                listenOnceRef.current().then(resolve).catch(reject);
+              } else {
+                reject(new Error("Speech recognition was stopped."));
+              }
+            }, delay);
+          } else {
+            reject(new Error("Speech recognition was stopped. Please try again — make sure no other tabs are using the microphone."));
+          }
         } else {
           reject(new Error(event.error || "Speech recognition error"));
         }
@@ -354,6 +380,15 @@ export function useVoiceIntake(
 
   /* ----- main conversation loop ----- */
 
+  /** Ensure synthesis is fully stopped and audio system is free. */
+  const prepareForListening = async () => {
+    window.speechSynthesis?.cancel();
+    // Give the audio subsystem time to release
+    await new Promise((r) => setTimeout(r, 250));
+    // Reset abort retry counter for each fresh listen attempt
+    abortRetryRef.current = 0;
+  };
+
   const runConversation = useCallback(async () => {
     try {
       // 1. Agent introduction
@@ -364,6 +399,7 @@ export function useVoiceIntake(
       await speak(intro);
 
       // 2. Listen for the prospect's initial inquiry
+      await prepareForListening();
       setState("listening");
       const initialMessage = await listenOnce();
       addEntry("prospect", initialMessage);
@@ -391,6 +427,7 @@ export function useVoiceIntake(
         setQuestionIndex(i + 1);
         await speak(question);
 
+        await prepareForListening();
         setState("listening");
         try {
           const answer = await listenOnce();
