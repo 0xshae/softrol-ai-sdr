@@ -4,7 +4,6 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
-  Bot,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -37,8 +36,12 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  createCustomIntakeFlow,
+  scenarioIntakeFlows,
+} from "@/lib/intake-flows";
 import { formatCrmBrief, qualifyCustomInput } from "@/lib/qualifier";
 import { leadScenarios, tradeShowImports } from "@/lib/scenarios";
 import type {
@@ -646,26 +649,116 @@ function ProspectExperience({
   const [activeLead, setActiveLead] = useState<LeadScenario | null>(null);
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [error, setError] = useState("");
+  const [visibleMessageCount, setVisibleMessageCount] = useState(0);
+  const [isTyping, setIsTyping] = useState(false);
+  const [intakeReady, setIntakeReady] = useState(false);
+  const [intakeKey, setIntakeKey] = useState(0);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const qualificationTimerRef = useRef<number | null>(null);
 
   const selected = leadScenarios.find((lead) => lead.id === selectedId) ?? leadScenarios[2];
+  const customValue = customInput.trim();
+  const intakeLead = useMemo(
+    () => (customValue ? qualifyCustomInput(customValue).lead : selected),
+    [customValue, selected],
+  );
+  const intakeFlow = useMemo(
+    () =>
+      customValue
+        ? createCustomIntakeFlow(intakeLead.missingQuestions)
+        : (scenarioIntakeFlows[selected.id] ??
+          createCustomIntakeFlow(selected.missingQuestions)),
+    [customValue, intakeLead.missingQuestions, selected],
+  );
 
-  const runQualification = () => {
-    setError("");
-    const value = customInput.trim();
-    if (customInput.length > 0 && !value) {
-      setError("Enter a real inquiry before running qualification.");
-      return;
+  const resetConversation = () => {
+    if (qualificationTimerRef.current !== null) {
+      window.clearTimeout(qualificationTimerRef.current);
+      qualificationTimerRef.current = null;
     }
-    const lead = value ? qualifyCustomInput(value).lead : selected;
-    setActiveLead(lead);
-    setStep(1);
-    window.setTimeout(() => setStep(2), 700);
-  };
-
-  const reset = () => {
+    setVisibleMessageCount(0);
+    setIsTyping(false);
+    setIntakeReady(false);
     setActiveLead(null);
     setStep(0);
     setError("");
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const wait = (duration: number) =>
+      new Promise((resolve) => window.setTimeout(resolve, duration));
+
+    if (customInput.length > 0 && !customValue) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const playIntake = async () => {
+      await wait(customValue ? 850 : 450);
+
+      for (let index = 0; index < intakeFlow.length; index += 1) {
+        if (cancelled) return;
+        const message = intakeFlow[index];
+
+        if (message.role === "assistant") {
+          setIsTyping(true);
+          await wait(850);
+          if (cancelled) return;
+          setIsTyping(false);
+        } else {
+          await wait(650);
+          if (cancelled) return;
+        }
+
+        setVisibleMessageCount(index + 1);
+        await wait(500);
+      }
+
+      if (!cancelled) setIntakeReady(true);
+    };
+
+    void playIntake();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customInput, customValue, intakeFlow, intakeKey]);
+
+  useEffect(() => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [activeLead, isTyping, step, visibleMessageCount]);
+
+  const intakeStatus = intakeReady
+    ? "Ready for qualification"
+    : visibleMessageCount > 0 || isTyping
+      ? "Collecting missing context"
+      : "Intake in progress";
+
+  const runQualification = () => {
+    setError("");
+    if (customInput.length > 0 && !customValue) {
+      setError("Enter a real inquiry before running qualification.");
+      return;
+    }
+    if (!intakeReady) return;
+    setActiveLead(intakeLead);
+    setStep(1);
+    qualificationTimerRef.current = window.setTimeout(() => {
+      setStep(2);
+      qualificationTimerRef.current = null;
+    }, 700);
+  };
+
+  const restartIntake = () => {
+    resetConversation();
+    setIntakeKey((value) => value + 1);
   };
 
   return (
@@ -673,7 +766,7 @@ function ProspectExperience({
       <PageHeading
         eyebrow="External experience"
         title="A professional first response — before sales gets involved."
-        copy="See how Revenue Desk collects the context a Softrol specialist needs without pretending to scope, price, or engineer the solution."
+        copy="Customers try the agent through a website intake chat. The chat collects missing context before generating a CRM-ready handoff for Softrol’s team."
       />
       <div className="mt-8 grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)_340px]">
         <Card className="h-fit p-5">
@@ -686,9 +779,10 @@ function ProspectExperience({
               <button
                 key={lead.id}
                 onClick={() => {
+                  resetConversation();
                   setSelectedId(lead.id);
                   setCustomInput("");
-                  reset();
+                  setIntakeKey((value) => value + 1);
                 }}
                 className={cn(
                   "w-full rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70",
@@ -717,18 +811,21 @@ function ProspectExperience({
           <textarea
             value={customInput}
             onChange={(event) => {
+              resetConversation();
               setCustomInput(event.target.value);
-              setError("");
-              reset();
             }}
             placeholder="Paste an inbound message..."
             className="min-h-28 w-full resize-none rounded-xl border border-white/10 bg-[#071018] p-3 text-sm leading-6 text-slate-200 outline-none placeholder:text-slate-700 focus:border-cyan-300/40 focus:ring-2 focus:ring-cyan-300/10"
             aria-label="Custom inbound inquiry"
           />
           {error ? <p className="mt-2 text-xs text-rose-300">{error}</p> : null}
-          <Button className="mt-3 w-full" onClick={runQualification}>
+          <Button
+            className="mt-3 w-full"
+            onClick={runQualification}
+            disabled={!intakeReady}
+          >
             <WandSparkles size={16} />
-            Run qualification
+            {intakeReady ? "Run qualification" : "Complete intake first"}
           </Button>
         </Card>
 
@@ -736,54 +833,65 @@ function ProspectExperience({
           <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
             <div>
               <p className="text-sm font-semibold text-white">Softrol qualification assistant</p>
-              <p className="mt-0.5 text-xs text-slate-600">Professional · concise · controlled</p>
+              <p className="mt-0.5 text-xs text-slate-600">Softrol website intake</p>
             </div>
-            <div className="flex items-center gap-2 text-xs text-emerald-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Available
-            </div>
+            <Badge tone={intakeReady ? "emerald" : "cyan"}>
+              {intakeStatus}
+            </Badge>
           </div>
-          <div className="flex min-h-[620px] flex-col p-5 sm:p-7">
-            {!activeLead ? (
-              <>
-                <ChatBubble side="user">{customInput.trim() || selected.inboundMessage}</ChatBubble>
-                <div className="my-auto text-center">
-                  <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] text-cyan-300">
-                    <Bot size={25} />
+          <div
+            ref={chatScrollRef}
+            className="max-h-[700px] min-h-[620px] overflow-y-auto p-5 sm:p-7"
+          >
+            <div className="space-y-5">
+              <ChatBubble side="user">{intakeLead.inboundMessage}</ChatBubble>
+              {intakeFlow
+                .slice(0, visibleMessageCount)
+                .map((message, index) => (
+                  <ChatBubble
+                    key={`${message.role}-${index}-${message.content}`}
+                    side={message.role === "prospect" ? "user" : "assistant"}
+                  >
+                    {message.content}
+                  </ChatBubble>
+                ))}
+              {isTyping ? <TypingIndicator /> : null}
+              {intakeReady && !activeLead ? (
+                <div className="animate-fade-up flex items-start gap-3 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.05] p-4">
+                  <CheckCircle2
+                    className="mt-0.5 shrink-0 text-cyan-300"
+                    size={19}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-cyan-100">
+                      Website intake complete
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-400">
+                      The conversation is ready for the qualification rules to run.
+                    </p>
                   </div>
-                  <p className="mt-5 text-lg font-semibold text-white">Ready to qualify</p>
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-                    Revenue Desk will classify the inquiry, ask only what is missing,
-                    and prepare the correct route for human review.
-                  </p>
                 </div>
-              </>
-            ) : (
-              <div className="space-y-5">
-                <ChatBubble side="user">{activeLead.inboundMessage}</ChatBubble>
-                <ChatBubble side="assistant">{activeLead.draftResponse}</ChatBubble>
+              ) : null}
+              {activeLead ? (
+                <>
                 {step >= 1 ? (
                   <div className="animate-fade-up rounded-xl border border-white/[0.08] bg-white/[0.025] p-5">
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <MessageSquareText size={16} className="text-cyan-300" />
-                      Details to confirm
+                      <Sparkles size={16} className="text-cyan-300" />
+                      Qualification result
                     </div>
-                    {activeLead.missingQuestions.length ? (
-                      <ol className="mt-4 space-y-3">
-                        {activeLead.missingQuestions.slice(0, 5).map((question, index) => (
-                          <li key={question} className="flex gap-3 text-sm leading-6 text-slate-300">
-                            <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/[0.06] text-[10px] font-semibold text-slate-500">
-                              {index + 1}
-                            </span>
-                            {question}
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="mt-3 text-sm text-slate-400">
-                        No additional qualification is required before routing.
-                      </p>
-                    )}
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <KeyValue label="Intent" value={activeLead.classification.intent} />
+                      <KeyValue label="Fit" value={activeLead.classification.fit} />
+                      <KeyValue
+                        label="Product area"
+                        value={activeLead.classification.productArea}
+                      />
+                      <KeyValue
+                        label="Route"
+                        value={activeLead.classification.recommendedRoute}
+                      />
+                    </div>
                   </div>
                 ) : null}
                 {step === 2 ? (
@@ -806,12 +914,13 @@ function ProspectExperience({
                       Review CRM-ready brief <ArrowRight size={15} />
                     </Button>
                   ) : null}
-                  <Button variant="ghost" onClick={reset}>
-                    <RefreshCw size={15} /> Reset
+                  <Button variant="ghost" onClick={restartIntake}>
+                    <RefreshCw size={15} /> Restart intake
                   </Button>
                 </div>
-              </div>
-            )}
+                </>
+              ) : null}
+            </div>
           </div>
         </Card>
 
@@ -874,6 +983,22 @@ function ChatBubble({
     <div className={cn("flex", side === "user" ? "justify-end" : "justify-start")}>
       <div className={cn("max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6", side === "user" ? "rounded-br-md bg-blue-500/15 text-blue-50" : "rounded-bl-md border border-white/[0.08] bg-white/[0.035] text-slate-300")}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex justify-start" aria-label="Assistant is typing">
+      <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.035] px-4 py-3">
+        {[0, 1, 2].map((dot) => (
+          <span
+            key={dot}
+            className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300"
+            style={{ animationDelay: `${dot * 140}ms` }}
+          />
+        ))}
       </div>
     </div>
   );
