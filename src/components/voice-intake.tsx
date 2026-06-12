@@ -467,6 +467,18 @@ export function VoiceIntakePanel({
               onClick={voice.toggleMic}
             />
 
+            {/* Done speaking — manually end the current listening turn */}
+            {isListening && (
+              <button
+                onClick={voice.skipTurn}
+                className="grid h-11 w-11 place-items-center rounded-full border border-cyan-300/30 bg-cyan-300/10 text-cyan-300 transition hover:bg-cyan-300/20"
+                aria-label="Done speaking"
+                title="Done speaking"
+              >
+                <CheckCircle2 size={18} />
+              </button>
+            )}
+
             {/* End call */}
             <button
               onClick={voice.stop}
