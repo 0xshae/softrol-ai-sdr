@@ -147,6 +147,8 @@ export type UseVoiceIntakeReturn = {
   start: () => void;
   /** Stop/end the session. */
   stop: () => void;
+  /** Manually end the current listening turn ("Done speaking" button). */
+  skipTurn: () => void;
   /** Toggle mic mute. */
   toggleMic: () => void;
   /** Toggle speaker mute. */
@@ -251,8 +253,14 @@ export function useVoiceIntake(
   const listenOnceRef = useRef<() => Promise<string>>(null);
   const networkRetryRef = useRef(0);
   const abortRetryRef = useRef(0);
+  const silenceRestartRef = useRef(0);
+  const listenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipResolveRef = useRef<((value: string) => void) | null>(null);
+  const accumulatedTextRef = useRef("");
   const MAX_NETWORK_RETRIES = 3;
   const MAX_ABORT_RETRIES = 3;
+  const MAX_SILENCE_RESTARTS = 2;
+  const LISTEN_TIMEOUT_MS = 15_000;
 
   const listenOnceImpl = (): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -264,6 +272,27 @@ export function useVoiceIntake(
       recogniserRef.current = r;
       let finalText = "";
 
+      // Store the resolve so skipTurn() can call it
+      skipResolveRef.current = (value: string) => {
+        skipResolveRef.current = null;
+        if (listenTimeoutRef.current) {
+          clearTimeout(listenTimeoutRef.current);
+          listenTimeoutRef.current = null;
+        }
+        try { r.stop(); } catch { /* ignore */ }
+        resolve(value || accumulatedTextRef.current || "(No response provided)");
+      };
+
+      // Per-turn timeout: auto-resolve after LISTEN_TIMEOUT_MS
+      if (listenTimeoutRef.current) clearTimeout(listenTimeoutRef.current);
+      listenTimeoutRef.current = setTimeout(() => {
+        listenTimeoutRef.current = null;
+        skipResolveRef.current = null;
+        try { r.stop(); } catch { /* ignore */ }
+        const text = finalText.trim() || accumulatedTextRef.current;
+        resolve(text || "(No response — timed out)");
+      }, LISTEN_TIMEOUT_MS);
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       r.onresult = (event: any) => {
         let interim = "";
@@ -271,6 +300,9 @@ export function useVoiceIntake(
           const t = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
             finalText += t;
+            accumulatedTextRef.current += t;
+            // Reset silence counter when we get actual speech
+            silenceRestartRef.current = 0;
           } else {
             interim += t;
           }
@@ -280,16 +312,25 @@ export function useVoiceIntake(
 
       r.onend = () => {
         setInterimText("");
-        // Successful recognition resets the retry counter
+        if (listenTimeoutRef.current) {
+          clearTimeout(listenTimeoutRef.current);
+          listenTimeoutRef.current = null;
+        }
+        skipResolveRef.current = null;
         networkRetryRef.current = 0;
         if (finalText.trim()) {
           resolve(finalText.trim());
         } else {
-          // User was silent — restart silently if still in listening state
-          if (stateRef.current === "listening" && listenOnceRef.current) {
+          // User was silent — restart up to MAX_SILENCE_RESTARTS times
+          silenceRestartRef.current += 1;
+          if (
+            silenceRestartRef.current <= MAX_SILENCE_RESTARTS &&
+            stateRef.current === "listening" &&
+            listenOnceRef.current
+          ) {
             listenOnceRef.current().then(resolve).catch(reject);
           } else {
-            reject(new Error("No speech detected"));
+            resolve(accumulatedTextRef.current || "(No response provided)");
           }
         }
       };
@@ -300,11 +341,21 @@ export function useVoiceIntake(
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           reject(new Error("Microphone permission denied. Please allow microphone access and try again."));
         } else if (event.error === "no-speech") {
-          // Silence — restart
-          if (stateRef.current === "listening" && listenOnceRef.current) {
+          // Silence — restart up to limit
+          silenceRestartRef.current += 1;
+          if (
+            silenceRestartRef.current <= MAX_SILENCE_RESTARTS &&
+            stateRef.current === "listening" &&
+            listenOnceRef.current
+          ) {
             listenOnceRef.current().then(resolve).catch(reject);
           } else {
-            reject(new Error("No speech detected"));
+            if (listenTimeoutRef.current) {
+              clearTimeout(listenTimeoutRef.current);
+              listenTimeoutRef.current = null;
+            }
+            skipResolveRef.current = null;
+            resolve(accumulatedTextRef.current || "(No response provided)");
           }
         } else if (event.error === "network") {
           // Network errors can be transient — retry with backoff
@@ -385,8 +436,10 @@ export function useVoiceIntake(
     window.speechSynthesis?.cancel();
     // Give the audio subsystem time to release
     await new Promise((r) => setTimeout(r, 250));
-    // Reset abort retry counter for each fresh listen attempt
+    // Reset per-turn counters
     abortRetryRef.current = 0;
+    silenceRestartRef.current = 0;
+    accumulatedTextRef.current = "";
   };
 
   const runConversation = useCallback(async () => {
@@ -487,10 +540,21 @@ export function useVoiceIntake(
     window.speechSynthesis?.cancel();
     stopCallTimer();
     setInterimText("");
+    if (listenTimeoutRef.current) {
+      clearTimeout(listenTimeoutRef.current);
+      listenTimeoutRef.current = null;
+    }
+    skipResolveRef.current = null;
     if (stateRef.current !== "qualified") {
       setState("idle");
     }
   }, [stopCallTimer]);
+
+  const skipTurn = useCallback(() => {
+    if (skipResolveRef.current) {
+      skipResolveRef.current(accumulatedTextRef.current);
+    }
+  }, []);
 
   const toggleMic = useCallback(() => {
     setMicMuted((prev) => !prev);
@@ -532,6 +596,12 @@ export function useVoiceIntake(
     }
     window.speechSynthesis?.cancel();
     stopCallTimer();
+    if (listenTimeoutRef.current) {
+      clearTimeout(listenTimeoutRef.current);
+      listenTimeoutRef.current = null;
+    }
+    skipResolveRef.current = null;
+    accumulatedTextRef.current = "";
     setState("idle");
     setTranscript([]);
     setInterimText("");
@@ -553,6 +623,7 @@ export function useVoiceIntake(
       }
       window.speechSynthesis?.cancel();
       if (callTimerRef.current) clearInterval(callTimerRef.current);
+      if (listenTimeoutRef.current) clearTimeout(listenTimeoutRef.current);
     };
   }, []);
 
@@ -571,6 +642,7 @@ export function useVoiceIntake(
     result,
     start,
     stop,
+    skipTurn,
     toggleMic,
     toggleSpeaker,
     confirm,
