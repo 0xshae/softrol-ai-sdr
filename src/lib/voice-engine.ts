@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { qualifyCustomInput } from "@/lib/qualifier";
 import type { QualificationResult } from "@/lib/types";
@@ -27,6 +33,19 @@ function getSpeechRecognition(): (new () => any) | null {
   return (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null;
 }
 
+function subscribeToVoiceSupport() {
+  return () => {};
+}
+
+function getVoiceSupportSnapshot() {
+  const support = detectVoiceSupport();
+  return `${support.recognition ? "1" : "0"}:${support.synthesis ? "1" : "0"}`;
+}
+
+function getServerVoiceSupportSnapshot() {
+  return "unchecked";
+}
+
 /* ------------------------------------------------------------------ */
 /*  Hook: useVoiceIntake                                              */
 /* ------------------------------------------------------------------ */
@@ -40,6 +59,8 @@ export type UseVoiceIntakeReturn = {
   interimText: string;
   /** Whether the browser supports voice at all. */
   supported: boolean;
+  /** Whether browser capability detection has completed on the client. */
+  supportChecked: boolean;
   /** Whether browser supports speech synthesis. */
   synthSupported: boolean;
   /** Whether agent voice output is muted. */
@@ -55,7 +76,7 @@ export type UseVoiceIntakeReturn = {
   /** Qualification result after confirming. */
   result: QualificationResult | null;
   /** Start the voice intake session. */
-  start: () => void;
+  start: () => Promise<void>;
   /** Stop/end the session. */
   stop: () => void;
   /** Manually end the current listening turn ("Done speaking" button). */
@@ -71,8 +92,16 @@ export type UseVoiceIntakeReturn = {
 export function useVoiceIntake(
   config: VoiceConfig = DEFAULT_VOICE_CONFIG,
 ): UseVoiceIntakeReturn {
-  const support = detectVoiceSupport();
-
+  const supportSnapshot = useSyncExternalStore(
+    subscribeToVoiceSupport,
+    getVoiceSupportSnapshot,
+    getServerVoiceSupportSnapshot,
+  );
+  const supportChecked = supportSnapshot !== "unchecked";
+  const support = {
+    recognition: supportSnapshot.startsWith("1:"),
+    synthesis: supportSnapshot.endsWith(":1"),
+  };
   const [state, setState] = useState<VoiceState>("idle");
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
   const [interimText, setInterimText] = useState("");
@@ -137,17 +166,24 @@ export function useVoiceIntake(
           resolve();
           return;
         }
+
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(watchdog);
+          setTimeout(resolve, 350);
+        };
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = config.lang;
         utterance.rate = 0.95;
         utterance.pitch = 1;
-        utterance.onend = () => {
-          // Allow the audio system to fully release before we start
-          // listening — Chrome aborts SpeechRecognition if synthesis
-          // audio hasn't settled.
-          setTimeout(resolve, 350);
-        };
-        utterance.onerror = () => setTimeout(resolve, 350);
+        utterance.onend = finish;
+        utterance.onerror = finish;
+        const watchdog = window.setTimeout(() => {
+          window.speechSynthesis.cancel();
+          finish();
+        }, Math.max(8_000, text.length * 90));
         window.speechSynthesis.cancel(); // clear any pending
         window.speechSynthesis.speak(utterance);
       }),
@@ -414,7 +450,7 @@ export function useVoiceIntake(
 
   /* ----- public API ----- */
 
-  const start = useCallback(() => {
+  const start = useCallback(async () => {
     if (!support.recognition) {
       setErrorMessage("Voice recognition is not supported in this browser.");
       transition("error");
@@ -429,10 +465,27 @@ export function useVoiceIntake(
     initialMessageRef.current = "";
     pendingDecisionRef.current = null;
     transition("requesting_permission");
-    startCallTimer();
 
-    // The conversation starts once we call runConversation — mic permission
-    // is implicitly requested when SpeechRecognition.start() is called.
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (error) {
+      sessionActiveRef.current = false;
+      const permissionDenied =
+        error instanceof DOMException &&
+        (error.name === "NotAllowedError" || error.name === "SecurityError");
+      setErrorMessage(
+        permissionDenied
+          ? "Microphone permission was denied. Allow microphone access for this site, then try again."
+          : "The microphone could not be opened. Check that a microphone is connected and available.",
+      );
+      transition("error");
+      return;
+    }
+
+    startCallTimer();
     void runConversation().catch(() => {
       // handled inside runConversation
     });
@@ -553,6 +606,7 @@ export function useVoiceIntake(
     transcript,
     interimText,
     supported: support.recognition,
+    supportChecked,
     synthSupported: support.synthesis,
     speakerMuted,
     callDuration,

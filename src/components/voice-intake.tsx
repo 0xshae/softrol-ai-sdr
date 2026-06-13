@@ -223,6 +223,17 @@ export function VoiceIntakePanel({
 
   const isListening = voice.state === "listening";
 
+  if (!voice.supportChecked) {
+    return (
+      <Card className="flex min-h-[680px] items-center justify-center p-8">
+        <div className="flex items-center gap-3 text-sm text-slate-400">
+          <Sparkles size={17} className="animate-pulse text-cyan-300" />
+          Checking voice support…
+        </div>
+      </Card>
+    );
+  }
+
   if (!voice.supported) {
     return <VoiceUnsupportedNotice />;
   }
@@ -241,7 +252,7 @@ export function VoiceIntakePanel({
           Describe your inquiry by voice. The assistant will ask Softrol-specific
           follow-up questions and prepare a CRM-ready qualification summary.
         </p>
-        <Button className="mt-8" onClick={voice.start}>
+        <Button className="mt-8" onClick={() => void voice.start()}>
           <Mic size={18} />
           Start voice intake
         </Button>
