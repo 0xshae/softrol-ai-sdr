@@ -211,7 +211,9 @@ export function useVoiceIntake(
     if (!SRClass) return null;
     const r = new SRClass();
     r.lang = config.lang;
-    r.continuous = true; // Keep mic open — we stop explicitly
+    // Chrome's remote recognition service is more reliable in single-utterance
+    // mode. We restart short sessions inside one bounded listening turn.
+    r.continuous = false;
     r.interimResults = config.interimResults;
     r.maxAlternatives = 1;
     return r;
@@ -219,30 +221,28 @@ export function useVoiceIntake(
 
   /* ----- listen for one turn ----- */
   /*
-   * The mic stays open (continuous:true) and only stops when:
-   *  1. 20s hard timeout fires (no speech at all)
+   * The listening turn remains open across short recognition sessions until:
+   *  1. 30s hard timeout fires (no speech at all)
    *  2. 3s of silence AFTER speech was detected (natural end of utterance)
    *  3. User clicks the "Done speaking" button (skipTurn)
-   *  4. A fatal error occurs (permission denied, network)
+   *  4. Permission is denied or network retries are exhausted
    */
 
   const listenOnceRef = useRef<() => Promise<string>>(null);
   const listenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silenceAfterSpeechRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipResolveRef = useRef<(() => void) | null>(null);
-  const LISTEN_TIMEOUT_MS = 20_000;
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const LISTEN_TIMEOUT_MS = 30_000;
   const SILENCE_AFTER_SPEECH_MS = 3_000;
 
   const listenOnceImpl = (): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const r = createRecogniser();
-      if (!r) {
-        reject(new Error("SpeechRecognition not available"));
-        return;
-      }
-      recogniserRef.current = r;
       let finalText = "";
+      let interimText = "";
       let resolved = false;
+      let networkFailures = 0;
+      let activeRecogniser: ReturnType<typeof createRecogniser> | null = null;
 
       const cleanup = () => {
         if (listenTimeoutRef.current) {
@@ -253,94 +253,148 @@ export function useVoiceIntake(
           clearTimeout(silenceAfterSpeechRef.current);
           silenceAfterSpeechRef.current = null;
         }
+        if (restartTimeoutRef.current) {
+          clearTimeout(restartTimeoutRef.current);
+          restartTimeoutRef.current = null;
+        }
         skipResolveRef.current = null;
         setInterimText("");
       };
 
       const doResolve = (text: string) => {
-        if (resolved) return;
+        const normalized = text.trim();
+        if (resolved || !normalized) return;
         resolved = true;
         cleanup();
-        try { r.stop(); } catch { /* ignore */ }
-        resolve(text || "(No response provided)");
+        try { activeRecogniser?.stop(); } catch { /* ignore */ }
+        resolve(normalized);
       };
 
       const doReject = (err: Error) => {
         if (resolved) return;
         resolved = true;
         cleanup();
-        try { r.stop(); } catch { /* ignore */ }
+        try { activeRecogniser?.stop(); } catch { /* ignore */ }
         reject(err);
       };
 
       // Hook for the "Done speaking" button
-      skipResolveRef.current = () => doResolve(finalText.trim());
+      skipResolveRef.current = () => {
+        const capturedText = `${finalText} ${interimText}`.trim();
+        if (capturedText) {
+          doResolve(capturedText);
+        }
+      };
 
       // Hard timeout — auto-stop after LISTEN_TIMEOUT_MS
       listenTimeoutRef.current = setTimeout(() => {
-        doResolve(finalText.trim());
-      }, LISTEN_TIMEOUT_MS);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      r.onresult = (event: any) => {
-        if (resolved) return;
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalText += t;
-          } else {
-            interim += t;
-          }
-        }
-        setInterimText(interim);
-
-        // Once we have final speech, start/reset a silence timer.
-        // Auto-submit after 3s of silence post-speech.
-        if (finalText.trim()) {
-          if (silenceAfterSpeechRef.current) {
-            clearTimeout(silenceAfterSpeechRef.current);
-          }
-          silenceAfterSpeechRef.current = setTimeout(() => {
-            doResolve(finalText.trim());
-          }, SILENCE_AFTER_SPEECH_MS);
-        }
-      };
-
-      r.onend = () => {
-        // With continuous:true, onend fires when we call r.stop()
-        // or the browser ends it for us. Resolve with whatever we have.
-        doResolve(finalText.trim());
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      r.onerror = (event: any) => {
-        if (resolved) return;
-        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-          doReject(new Error("Microphone permission denied. Please allow microphone access and try again."));
-        } else if (event.error === "network") {
-          const isSecure =
-            typeof window !== "undefined" &&
-            (window.location.protocol === "https:" ||
-              window.location.hostname === "localhost" ||
-              window.location.hostname === "127.0.0.1");
+        const capturedText = `${finalText} ${interimText}`.trim();
+        if (capturedText) {
+          doResolve(capturedText);
+        } else {
           doReject(
             new Error(
-              isSecure
-                ? "Speech recognition could not connect. Check your internet connection and try again."
-                : "Speech recognition requires HTTPS. Please access this page via localhost or deploy with HTTPS."
-            )
+              networkFailures
+                ? "Chrome could not reach its speech recognition service during the listening window. Keep the tab active, disable VPN or strict privacy blocking for this site, and try again."
+                : "No speech was detected. Keep this tab active, check your microphone input, and try again.",
+            ),
           );
-        } else if (event.error === "aborted" || event.error === "no-speech") {
-          // Non-fatal with continuous:true — the mic is still open.
-          // onend will fire separately if the browser actually stops.
-        } else {
-          // Unknown error — resolve gracefully with whatever we have
-          doResolve(finalText.trim());
+        }
+      }, LISTEN_TIMEOUT_MS);
+
+      const scheduleRestart = (delay = 200) => {
+        if (resolved || !sessionActiveRef.current) return;
+        if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+        restartTimeoutRef.current = setTimeout(() => {
+          restartTimeoutRef.current = null;
+          startRecognition();
+        }, delay);
+      };
+
+      const startRecognition = () => {
+        if (resolved || !sessionActiveRef.current) return;
+        const recogniser = createRecogniser();
+        if (!recogniser) {
+          doReject(new Error("Speech recognition is not available in this browser."));
+          return;
+        }
+        activeRecogniser = recogniser;
+        recogniserRef.current = recogniser;
+        let handledError = false;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recogniser.onresult = (event: any) => {
+          if (resolved) return;
+          let interim = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const text = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalText += text;
+            } else {
+              interim += text;
+            }
+          }
+          interimText = interim;
+          setInterimText(interim);
+
+          if (finalText.trim()) {
+            networkFailures = 0;
+            if (silenceAfterSpeechRef.current) {
+              clearTimeout(silenceAfterSpeechRef.current);
+            }
+            silenceAfterSpeechRef.current = setTimeout(() => {
+              doResolve(finalText);
+            }, SILENCE_AFTER_SPEECH_MS);
+          }
+        };
+
+        recogniser.onend = () => {
+          if (resolved || handledError) return;
+          const capturedText = `${finalText} ${interimText}`.trim();
+          if (capturedText) {
+            doResolve(capturedText);
+          } else {
+            scheduleRestart();
+          }
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recogniser.onerror = (event: any) => {
+          if (resolved) return;
+          handledError = true;
+          if (
+            event.error === "not-allowed" ||
+            event.error === "service-not-allowed"
+          ) {
+            doReject(
+              new Error(
+                "Microphone permission denied. Please allow microphone access and try again.",
+              ),
+            );
+          } else if (event.error === "network") {
+            networkFailures += 1;
+            scheduleRestart(Math.min(500 + networkFailures * 500, 3_000));
+          } else if (
+            event.error === "aborted" ||
+            event.error === "no-speech" ||
+            event.error === "audio-capture"
+          ) {
+            scheduleRestart();
+          } else {
+            doReject(
+              new Error(event.error || "Speech recognition could not start."),
+            );
+          }
+        };
+
+        try {
+          recogniser.start();
+        } catch {
+          scheduleRestart(400);
         }
       };
 
-      r.start();
+      startRecognition();
     });
   };
 
@@ -408,19 +462,10 @@ export function useVoiceIntake(
         await prepareForListening();
         if (!sessionActiveRef.current) return;
         transition("listening");
-        try {
-          const answer = await listenOnce();
-          if (!sessionActiveRef.current) return;
-          addEntry("prospect", answer);
-          conversation.push({ role: "prospect", content: answer, timestamp: Date.now() });
-        } catch {
-          addEntry("prospect", "(No response provided)");
-          conversation.push({
-            role: "prospect",
-            content: "(No response provided)",
-            timestamp: Date.now(),
-          });
-        }
+        const answer = await listenOnce();
+        if (!sessionActiveRef.current) return;
+        addEntry("prospect", answer);
+        conversation.push({ role: "prospect", content: answer, timestamp: Date.now() });
 
         transition("processing");
         decision = await requestAgentDecision(conversation);
@@ -510,6 +555,10 @@ export function useVoiceIntake(
       clearTimeout(silenceAfterSpeechRef.current);
       silenceAfterSpeechRef.current = null;
     }
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
     skipResolveRef.current = null;
     transition("idle");
   }, [stopCallTimer, transition]);
@@ -572,6 +621,10 @@ export function useVoiceIntake(
       clearTimeout(silenceAfterSpeechRef.current);
       silenceAfterSpeechRef.current = null;
     }
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
     skipResolveRef.current = null;
     transition("idle");
     setTranscript([]);
@@ -598,6 +651,7 @@ export function useVoiceIntake(
       if (callTimerRef.current) clearInterval(callTimerRef.current);
       if (listenTimeoutRef.current) clearTimeout(listenTimeoutRef.current);
       if (silenceAfterSpeechRef.current) clearTimeout(silenceAfterSpeechRef.current);
+      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
     };
   }, []);
 
