@@ -103,20 +103,52 @@ The console keeps the original inquiry and the prepared handoff visible together
 
 **Trade Show Mode** demonstrates the same qualification system applied to event leads, including sales opportunities, incomplete leads, service requests, and low-fit contacts.
 
-## How the AI-assisted voice demo works
+## How the voice intake agent works
 
-The typed scenario demo remains deterministic so every reviewer sees the same reliable intake flow. The optional voice experience can use OpenRouter to choose adaptive follow-up questions and generate the final structured handoff. If the model is unavailable, slow, or returns invalid output, the app falls back to the same Softrol-specific qualification rules.
+The Prospect Experience tab offers both **typed** and **voice** intake modes, toggled via a switch in the UI.
 
-This hybrid implementation is deliberate:
+### Architecture
 
-- every reviewer sees a complete and repeatable demo
-- no API key or external service is required for the core product
-- classification behavior can be inspected and explained
-- voice intake can demonstrate real-time model behavior without becoming a single point of failure
-- edge cases can be handled conservatively
-- the shared lead schema keeps deterministic and model-backed output aligned
+The voice agent uses a server-side transcription pipeline instead of relying on the browser's built-in `SpeechRecognition` API (which requires Chrome's remote servers and fails in many environments).
 
-The browser captures each prospect turn with `MediaRecorder`, then sends that short-lived recording to the server-side transcription route. The route uses OpenRouter speech-to-text and returns only the transcript to the conversation engine; the app does not persist the audio. Agent speech remains browser-native through speech synthesis.
+```text
+User speaks into mic
+      ↓
+Browser MediaRecorder captures audio (WebM/Opus)
+      ↓
+User clicks "Done speaking" (or 30s timeout)
+      ↓
+/api/transcribe → Groq Whisper (free) transcribes audio to text
+      ↓
+Transcript fed into adaptive question engine
+      ↓
+/api/voice-agent → OpenRouter LLM selects next follow-up question
+      ↓ (fallback: deterministic Softrol-specific rules)
+Agent speaks response via browser speechSynthesis
+      ↓
+Repeat until qualification is complete
+      ↓
+CRM-ready brief generated
+```
+
+### Key design decisions
+
+- **Groq Whisper for transcription**: Free tier, no credit card required, OpenAI-compatible API. Falls back to OpenRouter's paid transcription endpoint if `GROQ_API_KEY` is not set.
+- **MediaRecorder over SpeechRecognition**: Chrome's `webkitSpeechRecognition` depends on Google's remote servers and fails behind VPNs, strict privacy settings, or non-Chrome browsers. `MediaRecorder` captures audio locally and works everywhere.
+- **Deterministic fallback**: If the `/api/voice-agent` LLM call fails, the engine falls back to a keyword-matched question bank with Softrol-specific follow-ups. The qualification result uses the same `LeadScenario` schema either way.
+- **Transcript deduplication**: The deterministic fallback tracks which questions have already been asked and skips them, preventing repeated questions even when the user's answer doesn't match expected patterns.
+- **No audio persistence**: The recorded audio blob is sent to the server, transcribed, and discarded. Only the text transcript is retained for the session.
+- **Browser speech synthesis**: Agent responses are spoken using the native `speechSynthesis` API — no TTS API costs.
+
+### Voice controls
+
+| Control | Action |
+|---------|--------|
+| **Start voice intake** | Requests mic permission, begins the conversation |
+| **Done speaking** ✓ | Manually end your turn and submit for transcription |
+| **30s timeout** | Auto-submits if user doesn't click Done |
+| **Speaker mute** 🔇 | Silence agent speech while keeping the flow running |
+| **End call** 📞 | Terminate the session |
 
 ## How qualification works
 
@@ -201,8 +233,9 @@ Softrol's sales, technical, support, and service teams remain responsible for th
 - deterministic keyword and rule-based qualification
 - scripted intake flows for scenario conversations
 - browser-local interaction state and feedback
-- optional server-side OpenRouter integration for adaptive voice intake
-- deterministic fallback with no database or authentication
+- `MediaRecorder` audio capture with server-side Groq Whisper transcription
+- optional OpenRouter LLM integration for adaptive voice follow-ups
+- deterministic Softrol-specific fallback with no database or authentication
 
 The shared lead contract keeps Prospect Experience, Sales Console, brief exports, and future AI integrations aligned. A production implementation could replace the deterministic classifier and scripted replies with an approved LLM or voice channel while preserving the same intake states, qualification schema, guardrails, and human-review workflow.
 
@@ -210,15 +243,21 @@ The shared lead contract keeps Prospect Experience, Sales Console, brief exports
 
 ```text
 src/
-├── app/                         Next.js application shell
+├── app/
+│   ├── api/
+│   │   ├── transcribe/route.ts  Groq Whisper / OpenRouter STT endpoint
+│   │   └── voice-agent/route.ts OpenRouter LLM for adaptive follow-ups
+│   └── ...                      Next.js application shell
 ├── components/
-│   └── revenue-desk.tsx         Main product UI and interactions
+│   ├── revenue-desk.tsx         Main product UI and interactions
+│   └── voice-intake.tsx         Voice intake panel, waveform, controls
 └── lib/
     ├── intake-flows.ts          Scripted website intake conversations
     ├── qualifier.ts             Deterministic custom-input qualification
     ├── scenarios.ts             Softrol lead scenarios and expected outputs
-    ├── voice-agent.ts           Voice fallback rules and transcript enrichment
-    ├── voice-engine.ts          Browser speech and conversation state machine
+    ├── voice-agent.ts           Deterministic fallback rules and question bank
+    ├── voice-engine.ts          MediaRecorder capture and conversation state machine
+    ├── voice-types.ts           Voice state machine types and browser detection
     └── types.ts                 Shared lead and classification contracts
 ```
 
@@ -233,15 +272,20 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-The core app runs without environment variables. To enable adaptive voice intake, add:
+The core app runs without environment variables. To enable voice intake, add to `.env.local`:
 
 ```bash
+# Required for voice transcription (free, no credit card)
+GROQ_API_KEY=your_groq_api_key
+
+# Required for adaptive LLM-driven follow-up questions
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=nex-agi/nex-n2-pro:free
-OPENROUTER_STT_MODEL=openai/gpt-4o-mini-transcribe
 ```
 
-Keep `OPENROUTER_API_KEY` server-side. `OPENROUTER_STT_MODEL` is optional and defaults to `openai/gpt-4o-mini-transcribe`. For Vercel preview deployments, add the variables to the **Preview** environment and redeploy the feature branch. Qualification automatically falls back to deterministic Softrol-specific rules when the chat model is unavailable; voice transcription requires the OpenRouter key.
+Get a free Groq API key at [console.groq.com](https://console.groq.com). The transcription uses `whisper-large-v3-turbo` by default (override with `GROQ_STT_MODEL`). If `GROQ_API_KEY` is not set, the route falls back to OpenRouter's paid transcription endpoint (`openai/gpt-4o-mini-transcribe`, requires balance).
+
+For Vercel deployments, add these variables in **Settings → Environment Variables** and redeploy. Qualification automatically falls back to deterministic Softrol-specific rules when the LLM is unavailable; voice transcription requires at least `GROQ_API_KEY`.
 
 Quality checks:
 
