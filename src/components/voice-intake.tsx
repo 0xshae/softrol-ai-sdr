@@ -120,27 +120,25 @@ function WaveformVisualizer({
 
 function MicButton({
   listening,
-  onClick,
 }: {
   listening: boolean;
-  onClick: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
+    <div
       className={cn(
-        "relative grid h-20 w-20 place-items-center rounded-full transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70",
+        "relative grid h-20 w-20 place-items-center rounded-full transition-all duration-300",
         listening
           ? "bg-cyan-300 text-[#061219] shadow-[0_0_40px_rgba(75,209,229,0.3)]"
-          : "border border-white/[0.12] bg-white/[0.05] text-slate-300 hover:bg-white/[0.08]",
+          : "border border-white/[0.12] bg-white/[0.05] text-slate-300",
       )}
-      aria-label={listening ? "Microphone active" : "Start speaking"}
+      role="status"
+      aria-label={listening ? "Microphone active" : "Microphone waiting"}
     >
       {listening && (
         <span className="absolute inset-0 animate-pulse-ring rounded-full border-2 border-cyan-300/40" />
       )}
       <Mic size={28} />
-    </button>
+    </div>
   );
 }
 
@@ -462,10 +460,7 @@ export function VoiceIntakePanel({
             </button>
 
             {/* Main mic button */}
-            <MicButton
-              listening={isListening}
-              onClick={voice.toggleMic}
-            />
+            <MicButton listening={isListening} />
 
             {/* Done speaking — manually end the current listening turn */}
             {isListening && (
