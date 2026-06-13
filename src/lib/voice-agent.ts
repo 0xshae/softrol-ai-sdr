@@ -107,12 +107,14 @@ function questionAlreadyAnswered(question: string, input: string): boolean {
     [["when did the issue start"], /\b(?:today|this morning|this afternoon|yesterday|since|started|began)\b/i],
     [["production blocked"], /\b(?:production|operations?)\b.*\b(?:blocked|running|stopped|down)|\breporting (?:only|down)\b/i],
     [["callback number"], /\b(?:phone|callback|call me|reach me)\b|\+?\d[\d\s().-]{7,}/i],
-    [["type of facility", "type of facility or operation"], /\b(?:healthcare|hospitality|industrial|commercial|uniform rental|textile rental|laundromat|laundry plant|facility)\b/i],
-    [["how many garments", "what volume", "volume does each plant"], /\b[\d,]+\s*(?:garments|pieces|lbs|pounds|kg)(?:\s*\/\s*|\s+per\s+)?(?:day|daily|shift|week)?\b/i],
-    [["how do you sort today"], /\b(?:manual(?:ly)?|barcode|rfid)\b/i],
-    [["retrofit or a new"], /\b(?:retrofit|new build|new facility|new plant)\b/i],
-    [["main project driver"], /\b(?:labor|throughput|mis-?sorts?|visibility|tracking|reporting|accuracy)\b/i],
-    [["target implementation timeline", "active project or early research"], /\b(?:within|this quarter|this year|next (?:week|month|quarter|year)|timeline|evaluating|research)\b/i],
+    [["type of facility", "type of facility or operation"], /\b(?:healthcare|hospitality|industrial|commercial|uniform rental|textile rental|laundromat|laundry plant|facility|factory|warehouse|manufacturing|plant|hotel|resort|linen|cloth|textile|cleaning|processing|distribution|supply chain|logistics|gym|fitness|spa)\b/i],
+    [["how many garments", "what volume", "volume does each plant"], /\b[\d,]+\s*(?:garments|pieces|lbs|pounds|kg|units|items|people)?(?:\s*\/\s*|\s+per\s+)?(?:day|daily|shift|week)?\b|\b(?:small|medium|large|high|low)\s*(?:volume|capacity)\b/i],
+    [["how do you sort today"], /\b(?:manual(?:ly)?|barcode|rfid|hand|automated?)\b/i],
+    [["retrofit or a new"], /\b(?:retrofit|new build|new facility|new plant|existing|current|upgrading?)\b/i],
+    [["main project driver"], /\b(?:labor|throughput|mis-?sorts?|visibility|tracking|reporting|accuracy|efficiency|cost|automat)\b/i],
+    [["target implementation timeline", "active project or early research"], /\b(?:within|this quarter|this year|next (?:week|month|quarter|year)|timeline|evaluating|research|looking|planning|asap|urgent|soon)\b/i],
+    [["what process", "system are you trying to improve"], /\b(?:sorting|tracking|washing|drying|folding|delivery|automation|process|system|workflow|operations?)\b/i],
+    [["active project or early research"], /\b(?:active|project|research|evaluating|exploring|ready|budget|approved|looking into)\b/i],
   ];
 
   return checks.some(
@@ -129,8 +131,18 @@ export function createDeterministicVoiceDecision(
   const fullInput = messages.join(". ");
   const baseLead = qualifyCustomInput(fullInput || "No inquiry provided").lead;
   const questions = selectDeterministicQuestions(messages[0] ?? "");
+
+  // Collect questions the assistant has already asked (exact text match)
+  const askedQuestions = new Set(
+    transcript
+      .filter((e) => e.role === "assistant")
+      .map((e) => e.content.trim()),
+  );
+
   const nextQuestion = questions.find(
-    (question) => !questionAlreadyAnswered(question, fullInput),
+    (question) =>
+      !askedQuestions.has(question) &&
+      !questionAlreadyAnswered(question, fullInput),
   );
   const complete = !nextQuestion;
   const volumeMatch = fullInput.match(
