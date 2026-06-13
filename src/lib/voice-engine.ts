@@ -5,103 +5,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { qualifyCustomInput } from "@/lib/qualifier";
 import type { QualificationResult } from "@/lib/types";
 import {
+  createDeterministicVoiceDecision,
+  type VoiceAgentDecision,
+} from "@/lib/voice-agent";
+import {
   DEFAULT_VOICE_CONFIG,
   type VoiceConfig,
   type VoiceState,
   type VoiceTranscriptEntry,
   detectVoiceSupport,
 } from "@/lib/voice-types";
-
-/* ------------------------------------------------------------------ */
-/*  Deterministic follow-up question bank                             */
-/*  Keyed by keyword groups — the engine picks the first matching set */
-/* ------------------------------------------------------------------ */
-
-type QuestionSet = { keywords: string[]; questions: string[] };
-
-const QUESTION_BANK: QuestionSet[] = [
-  {
-    keywords: ["lois", "dashboard", "system down", "washer line", "not working", "scanner down"],
-    questions: [
-      "Which facility and washer line are affected?",
-      "When did the issue start?",
-      "Is production blocked, or is this limited to reporting?",
-      "What is the best callback number for your plant manager?",
-    ],
-  },
-  {
-    keywords: ["replacement", "spare part", "rfid tags", "scanner configuration", "service request"],
-    questions: [
-      "Which facility is this for?",
-      "What RFID tag type and quantity do you need?",
-      "Which scanner model needs configuration help?",
-      "Is production currently affected?",
-    ],
-  },
-  {
-    keywords: ["hospital", "healthcare laundry", "linen tracking"],
-    questions: [
-      "Are you looking for item-level RFID tracking, cart-level tracking, or both?",
-      "How many customer locations need reporting visibility?",
-      "Is this for a current facility or a new build?",
-      "What is your target implementation timeline?",
-    ],
-  },
-  {
-    keywords: ["uniform rental", "garments", "automated sorting", "rfid plus"],
-    questions: [
-      "Is this a retrofit or a new facility?",
-      "How many operators sort garments per shift?",
-      "What is your current mis-sort rate?",
-      "Which route accounting or ERP system do you use?",
-    ],
-  },
-  {
-    keywords: ["erp", "route accounting", "data sync", "integration"],
-    questions: [
-      "Which ERP and route accounting platforms are in use?",
-      "Which data needs to move between systems?",
-      "How frequently should the data update?",
-      "What plant software is installed today?",
-    ],
-  },
-  {
-    keywords: ["three plants", "3 plants", "multi-location", "multiple sites", "across all sites"],
-    questions: [
-      "What volume does each plant process per day?",
-      "Are the sites using the same production systems today?",
-      "Which reporting views need to be standardized?",
-      "Who is involved in the evaluation this quarter?",
-    ],
-  },
-  {
-    keywords: ["pricing", "price", "quote", "sorting system", "sortation"],
-    questions: [
-      "What type of facility do you operate?",
-      "Roughly how many garments do you process each day?",
-      "How do you sort today — manually, by barcode, or RFID?",
-      "Is this for a retrofit or a new facility?",
-      "What is the main project driver — labor, throughput, mis-sorts, or visibility?",
-    ],
-  },
-];
-
-const DEFAULT_QUESTIONS = [
-  "What type of facility or operation is this related to?",
-  "What volume do you process each day?",
-  "What process or system are you trying to improve?",
-  "Is this an active project or early research?",
-];
-
-function selectQuestions(transcript: string): string[] {
-  const lower = transcript.toLowerCase();
-  for (const set of QUESTION_BANK) {
-    if (set.keywords.some((kw) => lower.includes(kw))) {
-      return set.questions;
-    }
-  }
-  return DEFAULT_QUESTIONS;
-}
 
 /* ------------------------------------------------------------------ */
 /*  SpeechRecognition type shim                                       */
@@ -131,8 +44,6 @@ export type UseVoiceIntakeReturn = {
   synthSupported: boolean;
   /** Whether agent voice output is muted. */
   speakerMuted: boolean;
-  /** Whether the mic is temporarily muted by the user. */
-  micMuted: boolean;
   /** Call duration in seconds since listening first started. */
   callDuration: number;
   /** Current question index (for follow-up progress). */
@@ -149,12 +60,10 @@ export type UseVoiceIntakeReturn = {
   stop: () => void;
   /** Manually end the current listening turn ("Done speaking" button). */
   skipTurn: () => void;
-  /** Toggle mic mute. */
-  toggleMic: () => void;
   /** Toggle speaker mute. */
   toggleSpeaker: () => void;
   /** Confirm the transcript and run qualification. */
-  confirm: () => void;
+  confirm: () => Promise<void>;
   /** Full reset back to idle. */
   reset: () => void;
 };
@@ -168,7 +77,6 @@ export function useVoiceIntake(
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
   const [interimText, setInterimText] = useState("");
   const [speakerMuted, setSpeakerMuted] = useState(false);
-  const [micMuted, setMicMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [result, setResult] = useState<QualificationResult | null>(null);
@@ -178,12 +86,12 @@ export function useVoiceIntake(
   // Refs for mutable state accessed inside callbacks
   const recogniserRef = useRef<ReturnType<typeof createRecogniser> | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const questionsRef = useRef<string[]>([]);
-  const qIndexRef = useRef(0);
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
   const stateRef = useRef<VoiceState>("idle");
   const speakerMutedRef = useRef(false);
   const initialMessageRef = useRef("");
+  const pendingDecisionRef = useRef<VoiceAgentDecision | null>(null);
+  const sessionActiveRef = useRef(false);
 
   // Keep refs in sync
   useEffect(() => { stateRef.current = state; }, [state]);
@@ -192,10 +100,35 @@ export function useVoiceIntake(
 
   /* ----- helpers ----- */
 
+  const transition = useCallback((nextState: VoiceState) => {
+    stateRef.current = nextState;
+    setState(nextState);
+  }, []);
+
   const addEntry = useCallback((role: "prospect" | "assistant", content: string) => {
     const entry: VoiceTranscriptEntry = { role, content, timestamp: Date.now() };
     setTranscript((prev) => [...prev, entry]);
   }, []);
+
+  const requestAgentDecision = useCallback(
+    async (
+      currentTranscript: VoiceTranscriptEntry[],
+      finalize = false,
+    ) => {
+      try {
+        const response = await fetch("/api/voice-agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript: currentTranscript, finalize }),
+        });
+        if (!response.ok) throw new Error(`Voice agent returned ${response.status}`);
+        return (await response.json()) as VoiceAgentDecision;
+      } catch {
+        return createDeterministicVoiceDecision(currentTranscript);
+      }
+    },
+    [],
+  );
 
   const speak = useCallback(
     (text: string): Promise<void> =>
@@ -393,83 +326,109 @@ export function useVoiceIntake(
   const runConversation = useCallback(async () => {
     try {
       // 1. Agent introduction
-      setState("speaking");
+      transition("speaking");
       const intro =
         "This is an automated intake assistant for Softrol Systems. Please describe your inquiry, and I'll collect the details needed before connecting you with the right team.";
       addEntry("assistant", intro);
       await speak(intro);
+      if (!sessionActiveRef.current) return;
 
       // 2. Listen for the prospect's initial inquiry
       await prepareForListening();
-      setState("listening");
+      if (!sessionActiveRef.current) return;
+      transition("listening");
       const initialMessage = await listenOnce();
+      if (!sessionActiveRef.current) return;
       addEntry("prospect", initialMessage);
       initialMessageRef.current = initialMessage;
 
-      // 3. Select follow-up questions based on keywords
-      setState("processing");
-      const questions = selectQuestions(initialMessage);
-      questionsRef.current = questions;
-      qIndexRef.current = 0;
-      setTotalQuestions(questions.length);
+      const conversation: VoiceTranscriptEntry[] = [
+        { role: "assistant", content: intro, timestamp: Date.now() },
+        { role: "prospect", content: initialMessage, timestamp: Date.now() },
+      ];
+
+      // 3. Let the model select adaptive follow-ups and maintain the handoff.
+      transition("processing");
+      let decision = await requestAgentDecision(conversation);
+      if (!sessionActiveRef.current) return;
+      pendingDecisionRef.current = decision;
+      setTotalQuestions(5);
       setQuestionIndex(0);
+      let followUpCount = 0;
 
-      // Small delay for visual processing state
-      await new Promise((r) => setTimeout(r, 600));
+      // 4. Continue until the model has enough context or the turn cap is reached.
+      while (!decision.complete && followUpCount < 5) {
+        if (!sessionActiveRef.current) return;
 
-      // 4. Ask each follow-up question and capture response
-      for (let i = 0; i < questions.length; i++) {
-        if (stateRef.current === "error" || stateRef.current === "idle") return;
-
-        const question = questions[i];
-        setState("speaking");
+        const question = decision.reply;
+        transition("speaking");
         addEntry("assistant", question);
-        qIndexRef.current = i + 1;
-        setQuestionIndex(i + 1);
+        conversation.push({ role: "assistant", content: question, timestamp: Date.now() });
+        followUpCount += 1;
+        setQuestionIndex(followUpCount);
         await speak(question);
+        if (!sessionActiveRef.current) return;
 
         await prepareForListening();
-        setState("listening");
+        if (!sessionActiveRef.current) return;
+        transition("listening");
         try {
           const answer = await listenOnce();
+          if (!sessionActiveRef.current) return;
           addEntry("prospect", answer);
+          conversation.push({ role: "prospect", content: answer, timestamp: Date.now() });
         } catch {
-          // If they don't respond, note it and continue
           addEntry("prospect", "(No response provided)");
+          conversation.push({
+            role: "prospect",
+            content: "(No response provided)",
+            timestamp: Date.now(),
+          });
         }
+
+        transition("processing");
+        decision = await requestAgentDecision(conversation);
+        if (!sessionActiveRef.current) return;
+        pendingDecisionRef.current = decision;
       }
 
       // 5. Confirmation message
-      setState("speaking");
-      const confirmMsg =
-        "Thank you. I have collected the details from your inquiry. Please review the transcript and confirm so I can generate the qualification summary.";
+      transition("speaking");
+      const confirmMsg = decision.complete
+        ? decision.reply
+        : "Thank you. I have captured the available context. Please review the transcript and confirm so I can prepare the qualification summary.";
       addEntry("assistant", confirmMsg);
       await speak(confirmMsg);
+      if (!sessionActiveRef.current) return;
 
       // 6. Move to confirming state
-      setState("confirming");
+      transition("confirming");
     } catch (err) {
+      if (!sessionActiveRef.current) return;
       const message = err instanceof Error ? err.message : "Voice intake failed";
       setErrorMessage(message);
-      setState("error");
+      sessionActiveRef.current = false;
+      transition("error");
     }
-  }, [addEntry, listenOnce, speak]);
+  }, [addEntry, listenOnce, requestAgentDecision, speak, transition]);
 
   /* ----- public API ----- */
 
   const start = useCallback(() => {
     if (!support.recognition) {
       setErrorMessage("Voice recognition is not supported in this browser.");
-      setState("error");
+      transition("error");
       return;
     }
+    sessionActiveRef.current = true;
     setTranscript([]);
     setResult(null);
     setErrorMessage("");
     setQuestionIndex(0);
     setTotalQuestions(0);
     initialMessageRef.current = "";
-    setState("requesting_permission");
+    pendingDecisionRef.current = null;
+    transition("requesting_permission");
     startCallTimer();
 
     // The conversation starts once we call runConversation — mic permission
@@ -477,9 +436,11 @@ export function useVoiceIntake(
     void runConversation().catch(() => {
       // handled inside runConversation
     });
-  }, [support.recognition, startCallTimer, runConversation]);
+  }, [support.recognition, startCallTimer, runConversation, transition]);
 
   const stop = useCallback(() => {
+    sessionActiveRef.current = false;
+    stateRef.current = "idle";
     try {
       recogniserRef.current?.stop();
     } catch {
@@ -497,19 +458,13 @@ export function useVoiceIntake(
       silenceAfterSpeechRef.current = null;
     }
     skipResolveRef.current = null;
-    if (stateRef.current !== "qualified") {
-      setState("idle");
-    }
-  }, [stopCallTimer]);
+    transition("idle");
+  }, [stopCallTimer, transition]);
 
   const skipTurn = useCallback(() => {
     if (skipResolveRef.current) {
       skipResolveRef.current();
     }
-  }, []);
-
-  const toggleMic = useCallback(() => {
-    setMicMuted((prev) => !prev);
   }, []);
 
   const toggleSpeaker = useCallback(() => {
@@ -520,7 +475,7 @@ export function useVoiceIntake(
     }
   }, []);
 
-  const confirm = useCallback(() => {
+  const confirm = useCallback(async () => {
     // Build full prospect text from all prospect entries
     const prospectText = transcriptRef.current
       .filter((e) => e.role === "prospect")
@@ -533,14 +488,22 @@ export function useVoiceIntake(
       ? `${initialMessageRef.current}. ${prospectText}`
       : prospectText;
 
-    const qualResult = qualifyCustomInput(fullInput);
+    transition("processing");
+    const finalDecision = transcriptRef.current.length
+      ? await requestAgentDecision(transcriptRef.current, true)
+      : pendingDecisionRef.current;
+    const qualResult = finalDecision
+      ? { lead: finalDecision.lead, inputKind: "matched" as const }
+      : qualifyCustomInput(fullInput);
     setResult(qualResult);
-    setState("qualified");
+    sessionActiveRef.current = false;
+    transition("qualified");
     stopCallTimer();
     window.speechSynthesis?.cancel();
-  }, [stopCallTimer]);
+  }, [requestAgentDecision, stopCallTimer, transition]);
 
   const reset = useCallback(() => {
+    sessionActiveRef.current = false;
     try {
       recogniserRef.current?.stop();
     } catch {
@@ -557,7 +520,7 @@ export function useVoiceIntake(
       silenceAfterSpeechRef.current = null;
     }
     skipResolveRef.current = null;
-    setState("idle");
+    transition("idle");
     setTranscript([]);
     setInterimText("");
     setResult(null);
@@ -566,11 +529,13 @@ export function useVoiceIntake(
     setQuestionIndex(0);
     setTotalQuestions(0);
     initialMessageRef.current = "";
-  }, [stopCallTimer]);
+    pendingDecisionRef.current = null;
+  }, [stopCallTimer, transition]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      sessionActiveRef.current = false;
       try {
         recogniserRef.current?.stop();
       } catch {
@@ -590,7 +555,6 @@ export function useVoiceIntake(
     supported: support.recognition,
     synthSupported: support.synthesis,
     speakerMuted,
-    micMuted,
     callDuration,
     questionIndex,
     totalQuestions,
@@ -599,7 +563,6 @@ export function useVoiceIntake(
     start,
     stop,
     skipTurn,
-    toggleMic,
     toggleSpeaker,
     confirm,
     reset,

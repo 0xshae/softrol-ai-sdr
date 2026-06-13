@@ -22,6 +22,7 @@ export type Urgency =
 
 export type LeadSource =
   | "Website form"
+  | "Website voice intake"
   | "Sales inbox"
   | "Support form"
   | "Trade show"
