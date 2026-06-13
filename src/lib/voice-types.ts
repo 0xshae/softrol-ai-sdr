@@ -7,7 +7,8 @@ export type VoiceState =
   | "idle"                  // Waiting for user to start
   | "requesting_permission" // Asking for mic access
   | "listening"             // Mic active — capturing prospect speech
-  | "processing"            // Recogniser returned final result, matching intent
+  | "transcribing"          // Recorded turn is being converted to text
+  | "processing"            // Transcript returned, matching intent
   | "speaking"              // Agent speaking a follow-up question
   | "confirming"            // Transcript review before qualification
   | "qualified"             // qualifyCustomInput() ran, result ready
@@ -24,9 +25,9 @@ export type VoiceTranscriptEntry = {
 export type VoiceConfig = {
   /** BCP-47 language tag, default "en-US". */
   lang: string;
-  /** Keep recogniser open between utterances. */
+  /** Reserved for alternate voice transports. */
   continuous: boolean;
-  /** Show partial results while speaking. */
+  /** Reserved for alternate voice transports. */
   interimResults: boolean;
 };
 
@@ -38,19 +39,16 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
 
 /** Browser compatibility check result. */
 export type VoiceSupport = {
-  recognition: boolean;
+  recording: boolean;
   synthesis: boolean;
 };
 
-/** Check whether the current browser supports the Web Speech APIs. */
+/** Check whether the browser can capture microphone audio and speak responses. */
 export function detectVoiceSupport(): VoiceSupport {
   const w = typeof window !== "undefined" ? window : undefined;
+  const nav = typeof navigator !== "undefined" ? navigator : undefined;
   return {
-    recognition: Boolean(
-      w &&
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ((w as any).SpeechRecognition || (w as any).webkitSpeechRecognition),
-    ),
+    recording: Boolean(w?.MediaRecorder && nav?.mediaDevices?.getUserMedia),
     synthesis: Boolean(w && w.speechSynthesis),
   };
 }

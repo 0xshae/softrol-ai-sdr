@@ -22,24 +22,13 @@ import {
   detectVoiceSupport,
 } from "@/lib/voice-types";
 
-/* ------------------------------------------------------------------ */
-/*  SpeechRecognition type shim                                       */
-/* ------------------------------------------------------------------ */
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getSpeechRecognition(): (new () => any) | null {
-  if (typeof window === "undefined") return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null;
-}
-
 function subscribeToVoiceSupport() {
   return () => {};
 }
 
 function getVoiceSupportSnapshot() {
   const support = detectVoiceSupport();
-  return `${support.recognition ? "1" : "0"}:${support.synthesis ? "1" : "0"}`;
+  return `${support.recording ? "1" : "0"}:${support.synthesis ? "1" : "0"}`;
 }
 
 function getServerVoiceSupportSnapshot() {
@@ -99,7 +88,7 @@ export function useVoiceIntake(
   );
   const supportChecked = supportSnapshot !== "unchecked";
   const support = {
-    recognition: supportSnapshot.startsWith("1:"),
+    recording: supportSnapshot.startsWith("1:"),
     synthesis: supportSnapshot.endsWith(":1"),
   };
   const [state, setState] = useState<VoiceState>("idle");
@@ -113,7 +102,8 @@ export function useVoiceIntake(
   const [totalQuestions, setTotalQuestions] = useState(0);
 
   // Refs for mutable state accessed inside callbacks
-  const recogniserRef = useRef<ReturnType<typeof createRecogniser> | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
   const stateRef = useRef<VoiceState>("idle");
@@ -205,196 +195,145 @@ export function useVoiceIntake(
     }
   }, []);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function createRecogniser(): any {
-    const SRClass = getSpeechRecognition();
-    if (!SRClass) return null;
-    const r = new SRClass();
-    r.lang = config.lang;
-    // Chrome's remote recognition service is more reliable in single-utterance
-    // mode. We restart short sessions inside one bounded listening turn.
-    r.continuous = false;
-    r.interimResults = config.interimResults;
-    r.maxAlternatives = 1;
-    return r;
+  const stopMediaStream = useCallback(() => {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  }, []);
+
+  const ensureMediaStream = useCallback(async () => {
+    const current = mediaStreamRef.current;
+    if (current?.getAudioTracks().some((track) => track.readyState === "live")) {
+      return current;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    mediaStreamRef.current = stream;
+    return stream;
+  }, []);
+
+  function preferredAudioMimeType(): string | undefined {
+    return [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4",
+    ].find((mime) => MediaRecorder.isTypeSupported(mime));
   }
 
-  /* ----- listen for one turn ----- */
-  /*
-   * The listening turn remains open across short recognition sessions until:
-   *  1. 30s hard timeout fires (no speech at all)
-   *  2. 3s of silence AFTER speech was detected (natural end of utterance)
-   *  3. User clicks the "Done speaking" button (skipTurn)
-   *  4. Permission is denied or network retries are exhausted
-   */
+  /* ----- record and transcribe one prospect turn ----- */
 
   const listenOnceRef = useRef<() => Promise<string>>(null);
   const listenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const silenceAfterSpeechRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipResolveRef = useRef<(() => void) | null>(null);
-  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const LISTEN_TIMEOUT_MS = 30_000;
-  const SILENCE_AFTER_SPEECH_MS = 3_000;
 
-  const listenOnceImpl = (): Promise<string> => {
+  const transcribeRecording = useCallback(async (audio: Blob) => {
+    const formData = new FormData();
+    formData.append("audio", audio, `voice-turn.${audio.type.includes("ogg") ? "ogg" : audio.type.includes("mp4") ? "mp4" : "webm"}`);
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { text?: unknown; error?: unknown }
+      | null;
+    if (!response.ok) {
+      throw new Error(
+        typeof payload?.error === "string"
+          ? payload.error
+          : "Voice transcription failed. Please try again.",
+      );
+    }
+    const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+    if (!text) {
+      throw new Error("No speech was detected. Please speak clearly and try again.");
+    }
+    return text;
+  }, []);
+
+  const listenOnceImpl = async (): Promise<string> => {
+    const stream = await ensureMediaStream();
     return new Promise((resolve, reject) => {
-      let finalText = "";
-      let interimText = "";
-      let resolved = false;
-      let networkFailures = 0;
-      let activeRecogniser: ReturnType<typeof createRecogniser> | null = null;
+      const chunks: BlobPart[] = [];
+      let settled = false;
+      const mimeType = preferredAudioMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
 
       const cleanup = () => {
         if (listenTimeoutRef.current) {
           clearTimeout(listenTimeoutRef.current);
           listenTimeoutRef.current = null;
         }
-        if (silenceAfterSpeechRef.current) {
-          clearTimeout(silenceAfterSpeechRef.current);
-          silenceAfterSpeechRef.current = null;
-        }
-        if (restartTimeoutRef.current) {
-          clearTimeout(restartTimeoutRef.current);
-          restartTimeoutRef.current = null;
-        }
         skipResolveRef.current = null;
         setInterimText("");
+        if (recorderRef.current === recorder) recorderRef.current = null;
       };
 
-      const doResolve = (text: string) => {
-        const normalized = text.trim();
-        if (resolved || !normalized) return;
-        resolved = true;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        try { activeRecogniser?.stop(); } catch { /* ignore */ }
-        resolve(normalized);
+        reject(error);
       };
 
-      const doReject = (err: Error) => {
-        if (resolved) return;
-        resolved = true;
-        cleanup();
-        try { activeRecogniser?.stop(); } catch { /* ignore */ }
-        reject(err);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
       };
-
-      // Hook for the "Done speaking" button
-      skipResolveRef.current = () => {
-        const capturedText = `${finalText} ${interimText}`.trim();
-        if (capturedText) {
-          doResolve(capturedText);
-        }
+      recorder.onerror = () => {
+        fail(new Error("The microphone recording could not be completed."));
       };
-
-      // Hard timeout — auto-stop after LISTEN_TIMEOUT_MS
-      listenTimeoutRef.current = setTimeout(() => {
-        const capturedText = `${finalText} ${interimText}`.trim();
-        if (capturedText) {
-          doResolve(capturedText);
-        } else {
-          doReject(
-            new Error(
-              networkFailures
-                ? "Chrome could not reach its speech recognition service during the listening window. Keep the tab active, disable VPN or strict privacy blocking for this site, and try again."
-                : "No speech was detected. Keep this tab active, check your microphone input, and try again.",
-            ),
-          );
-        }
-      }, LISTEN_TIMEOUT_MS);
-
-      const scheduleRestart = (delay = 200) => {
-        if (resolved || !sessionActiveRef.current) return;
-        if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
-        restartTimeoutRef.current = setTimeout(() => {
-          restartTimeoutRef.current = null;
-          startRecognition();
-        }, delay);
-      };
-
-      const startRecognition = () => {
-        if (resolved || !sessionActiveRef.current) return;
-        const recogniser = createRecogniser();
-        if (!recogniser) {
-          doReject(new Error("Speech recognition is not available in this browser."));
+      recorder.onstop = () => {
+        if (settled) return;
+        if (!sessionActiveRef.current) {
+          fail(new Error("Voice intake stopped."));
           return;
         }
-        activeRecogniser = recogniser;
-        recogniserRef.current = recogniser;
-        let handledError = false;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        recogniser.onresult = (event: any) => {
-          if (resolved) return;
-          let interim = "";
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const text = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              finalText += text;
-            } else {
-              interim += text;
-            }
-          }
-          interimText = interim;
-          setInterimText(interim);
-
-          if (finalText.trim()) {
-            networkFailures = 0;
-            if (silenceAfterSpeechRef.current) {
-              clearTimeout(silenceAfterSpeechRef.current);
-            }
-            silenceAfterSpeechRef.current = setTimeout(() => {
-              doResolve(finalText);
-            }, SILENCE_AFTER_SPEECH_MS);
-          }
-        };
-
-        recogniser.onend = () => {
-          if (resolved || handledError) return;
-          const capturedText = `${finalText} ${interimText}`.trim();
-          if (capturedText) {
-            doResolve(capturedText);
-          } else {
-            scheduleRestart();
-          }
-        };
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        recogniser.onerror = (event: any) => {
-          if (resolved) return;
-          handledError = true;
-          if (
-            event.error === "not-allowed" ||
-            event.error === "service-not-allowed"
-          ) {
-            doReject(
-              new Error(
-                "Microphone permission denied. Please allow microphone access and try again.",
-              ),
-            );
-          } else if (event.error === "network") {
-            networkFailures += 1;
-            scheduleRestart(Math.min(500 + networkFailures * 500, 3_000));
-          } else if (
-            event.error === "aborted" ||
-            event.error === "no-speech" ||
-            event.error === "audio-capture"
-          ) {
-            scheduleRestart();
-          } else {
-            doReject(
-              new Error(event.error || "Speech recognition could not start."),
-            );
-          }
-        };
-
-        try {
-          recogniser.start();
-        } catch {
-          scheduleRestart(400);
+        const audio = new Blob(chunks, {
+          type: recorder.mimeType || mimeType || "audio/webm",
+        });
+        if (!audio.size) {
+          fail(new Error("No audio was captured. Please speak and try again."));
+          return;
         }
+        transition("transcribing");
+        void transcribeRecording(audio).then(
+          (text) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(text);
+          },
+          (error: unknown) => {
+            fail(
+              error instanceof Error
+                ? error
+                : new Error("Voice transcription failed. Please try again."),
+            );
+          },
+        );
       };
 
-      startRecognition();
+      skipResolveRef.current = () => {
+        if (recorder.state === "recording") recorder.stop();
+      };
+      listenTimeoutRef.current = setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, LISTEN_TIMEOUT_MS);
+
+      try {
+        recorder.start(250);
+      } catch {
+        fail(new Error("The microphone recording could not be started."));
+      }
     });
   };
 
@@ -496,8 +435,8 @@ export function useVoiceIntake(
   /* ----- public API ----- */
 
   const start = useCallback(async () => {
-    if (!support.recognition) {
-      setErrorMessage("Voice recognition is not supported in this browser.");
+    if (!support.recording) {
+      setErrorMessage("Voice recording is not supported in this browser.");
       transition("error");
       return;
     }
@@ -512,10 +451,7 @@ export function useVoiceIntake(
     transition("requesting_permission");
 
     try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      await ensureMediaStream();
     } catch (error) {
       sessionActiveRef.current = false;
       const permissionDenied =
@@ -534,16 +470,17 @@ export function useVoiceIntake(
     void runConversation().catch(() => {
       // handled inside runConversation
     });
-  }, [support.recognition, startCallTimer, runConversation, transition]);
+  }, [ensureMediaStream, support.recording, startCallTimer, runConversation, transition]);
 
   const stop = useCallback(() => {
     sessionActiveRef.current = false;
     stateRef.current = "idle";
     try {
-      recogniserRef.current?.stop();
+      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     } catch {
       // ignore
     }
+    stopMediaStream();
     window.speechSynthesis?.cancel();
     stopCallTimer();
     setInterimText("");
@@ -551,17 +488,9 @@ export function useVoiceIntake(
       clearTimeout(listenTimeoutRef.current);
       listenTimeoutRef.current = null;
     }
-    if (silenceAfterSpeechRef.current) {
-      clearTimeout(silenceAfterSpeechRef.current);
-      silenceAfterSpeechRef.current = null;
-    }
-    if (restartTimeoutRef.current) {
-      clearTimeout(restartTimeoutRef.current);
-      restartTimeoutRef.current = null;
-    }
     skipResolveRef.current = null;
     transition("idle");
-  }, [stopCallTimer, transition]);
+  }, [stopCallTimer, stopMediaStream, transition]);
 
   const skipTurn = useCallback(() => {
     if (skipResolveRef.current) {
@@ -601,29 +530,23 @@ export function useVoiceIntake(
     sessionActiveRef.current = false;
     transition("qualified");
     stopCallTimer();
+    stopMediaStream();
     window.speechSynthesis?.cancel();
-  }, [requestAgentDecision, stopCallTimer, transition]);
+  }, [requestAgentDecision, stopCallTimer, stopMediaStream, transition]);
 
   const reset = useCallback(() => {
     sessionActiveRef.current = false;
     try {
-      recogniserRef.current?.stop();
+      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     } catch {
       // ignore
     }
+    stopMediaStream();
     window.speechSynthesis?.cancel();
     stopCallTimer();
     if (listenTimeoutRef.current) {
       clearTimeout(listenTimeoutRef.current);
       listenTimeoutRef.current = null;
-    }
-    if (silenceAfterSpeechRef.current) {
-      clearTimeout(silenceAfterSpeechRef.current);
-      silenceAfterSpeechRef.current = null;
-    }
-    if (restartTimeoutRef.current) {
-      clearTimeout(restartTimeoutRef.current);
-      restartTimeoutRef.current = null;
     }
     skipResolveRef.current = null;
     transition("idle");
@@ -636,22 +559,21 @@ export function useVoiceIntake(
     setTotalQuestions(0);
     initialMessageRef.current = "";
     pendingDecisionRef.current = null;
-  }, [stopCallTimer, transition]);
+  }, [stopCallTimer, stopMediaStream, transition]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       sessionActiveRef.current = false;
       try {
-        recogniserRef.current?.stop();
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       } catch {
         // ignore
       }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       if (callTimerRef.current) clearInterval(callTimerRef.current);
       if (listenTimeoutRef.current) clearTimeout(listenTimeoutRef.current);
-      if (silenceAfterSpeechRef.current) clearTimeout(silenceAfterSpeechRef.current);
-      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
     };
   }, []);
 
@@ -659,7 +581,7 @@ export function useVoiceIntake(
     state,
     transcript,
     interimText,
-    supported: support.recognition,
+    supported: support.recording,
     supportChecked,
     synthSupported: support.synthesis,
     speakerMuted,
