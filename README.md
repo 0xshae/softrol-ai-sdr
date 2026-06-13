@@ -116,7 +116,7 @@ This hybrid implementation is deliberate:
 - edge cases can be handled conservatively
 - the shared lead schema keeps deterministic and model-backed output aligned
 
-Speech recognition and speech synthesis run in the browser through the Web Speech APIs. Audio is not uploaded or stored by this app; only the recognized transcript is sent to the server-side qualification route.
+The browser captures each prospect turn with `MediaRecorder`, then sends that short-lived recording to the server-side transcription route. The route uses OpenRouter speech-to-text and returns only the transcript to the conversation engine; the app does not persist the audio. Agent speech remains browser-native through speech synthesis.
 
 ## How qualification works
 
@@ -238,9 +238,10 @@ The core app runs without environment variables. To enable adaptive voice intake
 ```bash
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=nex-agi/nex-n2-pro:free
+OPENROUTER_STT_MODEL=openai/gpt-4o-mini-transcribe
 ```
 
-Keep `OPENROUTER_API_KEY` server-side. For Vercel preview deployments, add both variables to the **Preview** environment and redeploy the feature branch. The route automatically uses deterministic qualification when the key or model is unavailable.
+Keep `OPENROUTER_API_KEY` server-side. `OPENROUTER_STT_MODEL` is optional and defaults to `openai/gpt-4o-mini-transcribe`. For Vercel preview deployments, add the variables to the **Preview** environment and redeploy the feature branch. Qualification automatically falls back to deterministic Softrol-specific rules when the chat model is unavailable; voice transcription requires the OpenRouter key.
 
 Quality checks:
 
