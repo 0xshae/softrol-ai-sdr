@@ -38,6 +38,8 @@ function stateLabel(state: VoiceState): string {
       return "Requesting mic access";
     case "listening":
       return "Listening…";
+    case "transcribing":
+      return "Transcribing…";
     case "processing":
       return "Processing…";
     case "speaking":
@@ -58,6 +60,7 @@ function stateTone(
     case "listening":
       return "cyan";
     case "speaking":
+    case "transcribing":
     case "processing":
       return "amber";
     case "confirming":
@@ -189,9 +192,9 @@ export function VoiceUnsupportedNotice() {
         Voice intake not available
       </p>
       <p className="mt-2 text-sm leading-6 text-slate-400">
-        Your browser does not support the Web Speech API required for voice
-        intake. Please use <strong>Google Chrome</strong> or{" "}
-        <strong>Microsoft Edge</strong> for the voice experience, or continue
+        Your browser cannot capture microphone audio for voice intake. Please
+        use a current version of <strong>Google Chrome</strong>,{" "}
+        <strong>Microsoft Edge</strong>, or <strong>Safari</strong>, or continue
         with the typed intake below.
       </p>
     </Card>
@@ -257,7 +260,7 @@ export function VoiceIntakePanel({
           Start voice intake
         </Button>
         <p className="mt-4 text-xs text-slate-600">
-          Requires microphone access · No audio is recorded
+          Requires microphone access · Audio is transcribed, not stored
         </p>
       </Card>
     );
@@ -333,8 +336,11 @@ export function VoiceIntakePanel({
           {/* Listening indicator */}
           {isListening && !voice.interimText && (
             <div className="flex justify-end">
-              <div className="rounded-2xl rounded-br-md bg-blue-500/10 px-4 py-3">
+              <div className="space-y-2 rounded-2xl rounded-br-md bg-blue-500/10 px-4 py-3">
                 <WaveformVisualizer active className="h-5" />
+                <p className="text-xs text-blue-200/70">
+                  Speak, then select Done speaking
+                </p>
               </div>
             </div>
           )}
@@ -350,11 +356,13 @@ export function VoiceIntakePanel({
           )}
 
           {/* Processing indicator */}
-          {voice.state === "processing" && (
+          {(voice.state === "transcribing" || voice.state === "processing") && (
             <div className="flex justify-start">
               <div className="flex items-center gap-3 rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-sm text-slate-400">
                 <Sparkles size={16} className="animate-spin text-cyan-300" />
-                Analyzing inquiry and selecting follow-up questions…
+                {voice.state === "transcribing"
+                  ? "Transcribing your response…"
+                  : "Analyzing inquiry and selecting follow-up questions…"}
               </div>
             </div>
           )}
@@ -477,11 +485,12 @@ export function VoiceIntakePanel({
             {isListening && (
               <button
                 onClick={voice.skipTurn}
-                className="grid h-11 w-11 place-items-center rounded-full border border-cyan-300/30 bg-cyan-300/10 text-cyan-300 transition hover:bg-cyan-300/20"
+                className="flex h-11 items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-300/20"
                 aria-label="Done speaking"
                 title="Done speaking"
               >
                 <CheckCircle2 size={18} />
+                Done speaking
               </button>
             )}
 
