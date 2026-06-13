@@ -103,20 +103,20 @@ The console keeps the original inquiry and the prepared handoff visible together
 
 **Trade Show Mode** demonstrates the same qualification system applied to event leads, including sales opportunities, incomplete leads, service requests, and low-fit contacts.
 
-## Why the demo is deterministic
+## How the AI-assisted voice demo works
 
-This prototype uses deterministic Softrol-specific qualification rules so the evaluation is reliable. In production, the same workflow can run on an LLM with approved knowledge and guardrails.
+The typed scenario demo remains deterministic so every reviewer sees the same reliable intake flow. The optional voice experience can use OpenRouter to choose adaptive follow-up questions and generate the final structured handoff. If the model is unavailable, slow, or returns invalid output, the app falls back to the same Softrol-specific qualification rules.
 
-The deterministic implementation is deliberate:
+This hybrid implementation is deliberate:
 
 - every reviewer sees a complete and repeatable demo
-- no API key or external service is required
+- no API key or external service is required for the core product
 - classification behavior can be inspected and explained
-- the product never depends on variable model output during the assignment demo
+- voice intake can demonstrate real-time model behavior without becoming a single point of failure
 - edge cases can be handled conservatively
-- the same lead schema can later support an LLM without changing the product workflow
+- the shared lead schema keeps deterministic and model-backed output aligned
 
-The demoware is not pretending that hardcoded responses are a production AI system. It demonstrates the product behavior, operating model, user experience, guardrails, and handoff contract that a production model would need to follow.
+The browser captures each prospect turn with `MediaRecorder`, then sends that short-lived recording to the server-side transcription route. The route uses OpenRouter speech-to-text and returns only the transcript to the conversation engine; the app does not persist the audio. Agent speech remains browser-native through speech synthesis.
 
 ## How qualification works
 
@@ -201,7 +201,8 @@ Softrol's sales, technical, support, and service teams remain responsible for th
 - deterministic keyword and rule-based qualification
 - scripted intake flows for scenario conversations
 - browser-local interaction state and feedback
-- no database, authentication, or external AI API
+- optional server-side OpenRouter integration for adaptive voice intake
+- deterministic fallback with no database or authentication
 
 The shared lead contract keeps Prospect Experience, Sales Console, brief exports, and future AI integrations aligned. A production implementation could replace the deterministic classifier and scripted replies with an approved LLM or voice channel while preserving the same intake states, qualification schema, guardrails, and human-review workflow.
 
@@ -216,6 +217,8 @@ src/
     ├── intake-flows.ts          Scripted website intake conversations
     ├── qualifier.ts             Deterministic custom-input qualification
     ├── scenarios.ts             Softrol lead scenarios and expected outputs
+    ├── voice-agent.ts           Voice fallback rules and transcript enrichment
+    ├── voice-engine.ts          Browser speech and conversation state machine
     └── types.ts                 Shared lead and classification contracts
 ```
 
@@ -230,6 +233,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+The core app runs without environment variables. To enable adaptive voice intake, add:
+
+```bash
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=nex-agi/nex-n2-pro:free
+OPENROUTER_STT_MODEL=openai/gpt-4o-mini-transcribe
+```
+
+Keep `OPENROUTER_API_KEY` server-side. `OPENROUTER_STT_MODEL` is optional and defaults to `openai/gpt-4o-mini-transcribe`. For Vercel preview deployments, add the variables to the **Preview** environment and redeploy the feature branch. Qualification automatically falls back to deterministic Softrol-specific rules when the chat model is unavailable; voice transcription requires the OpenRouter key.
+
 Quality checks:
 
 ```bash
@@ -240,7 +253,7 @@ npm run build
 
 ## Deployment
 
-The app requires no environment variables or external services.
+The core app requires no environment variables or external services. OpenRouter variables are optional and only enable the model-backed voice path.
 
 Use the current Vercel CLI:
 
